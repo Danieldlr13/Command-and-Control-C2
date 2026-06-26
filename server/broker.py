@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 
@@ -11,7 +12,7 @@ from protocol import (
     MSG_NOP, MSG_ERROR, MSG_NAMES,
     pack_clear, unpack_clear,
     server_process_hello, build_frame, parse_frame,
-    generate_server_keypair, save_server_key, load_server_key,
+    generate_server_keypair, save_server_key, load_server_key, get_pub_bytes,
 )
 from cryptography.exceptions import InvalidTag
 
@@ -22,7 +23,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("nexus.server")
 
-SERVER_KEY_FILE = "server_key.bin"
+SERVER_KEY_FILE  = "server_key.bin"
+SERVER_PUB_FILE  = "server_pub.hex"
+SESSION_TTL      = 300          # seconds — evict idle sessions after 5 min
+TASK_QUEUE_MAX   = 100          # max pending tasks per agent
+MAX_RESULTS      = 500          # max stored results per agent (circular)
+MAX_OUTPUT_BYTES = 64 * 1024    # 64 KB — truncate stdout/stderr above this
+OPERATOR_API_KEY = os.environ.get("NEXUS_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Global state (safe: asyncio is single-threaded)
@@ -32,6 +39,26 @@ sessions: dict = {}           # session_id_hex -> SessionState
 agents:   dict = {}           # agent_id -> AgentState
 results:  dict = {}           # agent_id -> [ResultEntry]
 tasks:    dict = {}           # agent_id -> asyncio.Queue
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _truncate(s: str) -> str:
+    encoded = s.encode("utf-8", errors="replace")
+    if len(encoded) <= MAX_OUTPUT_BYTES:
+        return s
+    return encoded[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace") + "\n[truncated]"
+
+
+@web.middleware
+async def _operator_auth(request: web.Request, handler):
+    """Require X-Api-Key on all /agents/* routes when NEXUS_API_KEY is set."""
+    if OPERATOR_API_KEY and request.path != "/":
+        if request.headers.get("X-Api-Key", "") != OPERATOR_API_KEY:
+            return web.json_response({"error": "unauthorized"}, status=401)
+    return await handler(request)
 
 
 class SessionState:
@@ -44,6 +71,10 @@ class SessionState:
         self.encrypted  = chacha is not None
 
 
+def _validate_agent_id(agent_id: str) -> bool:
+    return bool(agent_id) and agent_id != "unknown" and len(agent_id) <= 128
+
+
 def _ensure_agent(agent_id: str) -> None:
     if agent_id not in agents:
         agents[agent_id] = {
@@ -53,7 +84,7 @@ def _ensure_agent(agent_id: str) -> None:
             "pending_tasks": 0,
         }
         results[agent_id] = []
-        tasks[agent_id]   = asyncio.Queue()
+        tasks[agent_id]   = asyncio.Queue(maxsize=TASK_QUEUE_MAX)
         log.info("NEW   agent_id=%.8s", agent_id)
     else:
         agents[agent_id]["last_seen"] = time.time()
@@ -129,10 +160,15 @@ async def _handle_beacon_clear(payload: bytes) -> web.Response:
     """Fase 1-2: BEACON in clear — parse JSON, register agent, return NOP or TASK."""
     try:
         data     = json.loads(payload.decode("utf-8"))
-        agent_id = data.get("agent_id", "unknown")
+        agent_id = data.get("agent_id", "")
     except Exception:
-        agent_id = "unknown"
+        agent_id = ""
         data     = {}
+
+    if not _validate_agent_id(agent_id):
+        log.warning("BEACON with invalid agent_id=%r — ignored", agent_id)
+        return web.Response(body=pack_clear(MSG_ERROR), status=400,
+                            content_type="application/octet-stream")
 
     _ensure_agent(agent_id)
     log.info("BEACON agent_id=%.8s ts=%s", agent_id, data.get("ts", "?"))
@@ -158,17 +194,27 @@ async def _handle_result_clear(payload: bytes) -> web.Response:
     """Fase 2: RESULT in clear — store and log."""
     try:
         data     = json.loads(payload.decode("utf-8"))
-        agent_id = data.get("agent_id", "unknown")
+        agent_id = data.get("agent_id", "")
     except Exception:
         data     = {}
-        agent_id = "unknown"
+        agent_id = ""
+
+    if not _validate_agent_id(agent_id):
+        return web.Response(body=pack_clear(MSG_ERROR), status=400,
+                            content_type="application/octet-stream")
+
+    data["stdout"] = _truncate(data.get("stdout", ""))
+    data["stderr"] = _truncate(data.get("stderr", ""))
 
     _ensure_agent(agent_id)
     log.info("RESULT agent_id=%.8s task_id=%.8s exit=%s",
              agent_id, data.get("task_id", "?"), data.get("exit_code", "?"))
 
     if agent_id in results:
-        results[agent_id].append(data)
+        bucket = results[agent_id]
+        bucket.append(data)
+        if len(bucket) > MAX_RESULTS:
+            del bucket[0]
 
     return web.Response(body=pack_clear(MSG_NOP), content_type="application/octet-stream")
 
@@ -187,6 +233,8 @@ async def _dispatch_encrypted(
             agent_id = None
             data     = {}
 
+        if agent_id and not _validate_agent_id(agent_id):
+            agent_id = None
         if agent_id and sess.agent_id is None:
             sess.agent_id = agent_id
             _ensure_agent(agent_id)
@@ -216,15 +264,25 @@ async def _dispatch_encrypted(
     if msg_type == MSG_RESULT:
         try:
             data     = json.loads(payload.decode("utf-8"))
-            agent_id = sess.agent_id or data.get("agent_id", "unknown")
+            agent_id = sess.agent_id or data.get("agent_id", "")
         except Exception:
             data     = {}
-            agent_id = sess.agent_id or "unknown"
+            agent_id = sess.agent_id or ""
+
+        if not _validate_agent_id(agent_id):
+            nop = build_frame(MSG_NOP, b"", sess.chacha, sess.srv_nonce)
+            return web.Response(body=nop, content_type="application/octet-stream")
+
+        data["stdout"] = _truncate(data.get("stdout", ""))
+        data["stderr"] = _truncate(data.get("stderr", ""))
 
         _ensure_agent(agent_id)
         log.info("RESULT(enc) agent_id=%.8s task_id=%.8s exit=%s",
                  agent_id, data.get("task_id", "?"), data.get("exit_code", "?"))
-        results.setdefault(agent_id, []).append(data)
+        bucket = results.setdefault(agent_id, [])
+        bucket.append(data)
+        if len(bucket) > MAX_RESULTS:
+            del bucket[0]
         nop = build_frame(MSG_NOP, b"", sess.chacha, sess.srv_nonce)
         return web.Response(body=nop, content_type="application/octet-stream")
 
@@ -263,12 +321,16 @@ async def api_enqueue_task(request: web.Request) -> web.Response:
     cmd = body.get("cmd", "").strip()
     if not cmd:
         return web.json_response({"error": "missing cmd"}, status=400)
+    timeout_s = max(1, min(int(body.get("timeout_s", 30)), 3600))
     task = {
         "task_id":   str(uuid.uuid4()),
         "cmd":       cmd,
-        "timeout_s": int(body.get("timeout_s", 30)),
+        "timeout_s": timeout_s,
     }
-    await tasks[agent_id].put(task)
+    try:
+        tasks[agent_id].put_nowait(task)
+    except asyncio.QueueFull:
+        return web.json_response({"error": "task queue full"}, status=429)
     agents[agent_id]["pending_tasks"] += 1
     log.info("ENQUEUE agent_id=%.8s task_id=%.8s cmd=%r",
              agent_id, task["task_id"], cmd)
@@ -289,11 +351,23 @@ async def api_get_results(request: web.Request) -> web.Response:
 async def _monitor_agents() -> None:
     while True:
         now = time.time()
-        for data in agents.values():
+        for data in list(agents.values()):
             if now - data["last_seen"] > 30 and data["status"] == "online":
                 data["status"] = "offline"
                 log.warning("OFFLINE agent_id=%.8s", data["agent_id"])
         await asyncio.sleep(5)
+
+
+async def _cleanup_sessions() -> None:
+    """Evict sessions idle longer than SESSION_TTL to prevent memory leak."""
+    while True:
+        await asyncio.sleep(60)
+        cutoff = time.time() - SESSION_TTL
+        stale  = [sid for sid, s in sessions.items() if s.last_seen < cutoff]
+        for sid in stale:
+            del sessions[sid]
+        if stale:
+            log.info("evicted %d stale sessions", len(stale))
 
 
 async def _on_startup(app: web.Application) -> None:
@@ -302,10 +376,22 @@ async def _on_startup(app: web.Application) -> None:
         server_priv = load_server_key(SERVER_KEY_FILE)
         log.info("server key loaded from %s", SERVER_KEY_FILE)
     except FileNotFoundError:
-        server_priv, pub_bytes = generate_server_keypair()
+        server_priv, _ = generate_server_keypair()
         save_server_key(server_priv, SERVER_KEY_FILE)
-        log.info("server key generated — pub=%s", pub_bytes.hex())
+        log.info("server key generated")
+    pub = get_pub_bytes(server_priv)
+    try:
+        with open(SERVER_PUB_FILE, "w") as f:
+            f.write(pub.hex())
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cannot write {SERVER_PUB_FILE}: {exc}. Agents cannot obtain the server public key."
+        ) from exc
+    if not OPERATOR_API_KEY:
+        log.warning("NEXUS_API_KEY not set — operator API is unauthenticated")
+    log.info("server pub=%s", pub.hex())
     asyncio.create_task(_monitor_agents())
+    asyncio.create_task(_cleanup_sessions())
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +399,10 @@ async def _on_startup(app: web.Application) -> None:
 # ---------------------------------------------------------------------------
 
 def build_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(
+        middlewares=[_operator_auth],
+        client_max_size=1 * 1024 * 1024,  # 1 MB max request body
+    )
     app.router.add_post("/",                         handle_nexus)
     app.router.add_get("/agents",                    api_list_agents)
     app.router.add_post("/agents/{agent_id}/task",   api_enqueue_task)

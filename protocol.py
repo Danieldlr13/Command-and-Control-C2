@@ -120,6 +120,8 @@ def server_process_hello(
     Process HELLO, derive session_key, build WELCOME frame.
     Returns (welcome_frame, session_id, session_key, chacha, server_nonce_counter).
     """
+    if len(hello_raw) < 33:
+        raise ValueError(f"HELLO too short: {len(hello_raw)} bytes (expected 33)")
     if hello_raw[0] != MSG_HELLO:
         raise ValueError(f"Expected HELLO (0x01), got 0x{hello_raw[0]:02x}")
 
@@ -147,15 +149,21 @@ def agent_process_welcome(
     welcome_raw: bytes,
     agent_priv: X25519PrivateKey,
     agent_pub_bytes: bytes,
+    expected_server_pub: bytes | None = None,
 ) -> tuple[bytes, bytes, ChaCha20Poly1305, NonceCounter]:
     """
     Process WELCOME and derive the same session_key the server computed.
     Returns (session_id, session_key, chacha, agent_nonce_counter).
+    Raises ValueError if key pinning fails (expected_server_pub mismatch).
     """
+    if len(welcome_raw) < 82:  # 1 + 32 + 16 + 1 + 32
+        raise ValueError(f"WELCOME too short: {len(welcome_raw)} bytes (expected ≥82)")
     if welcome_raw[0] != MSG_WELCOME:
         raise ValueError(f"Expected WELCOME (0x02), got 0x{welcome_raw[0]:02x}")
 
     server_pub_bytes = welcome_raw[1:33]
+    if expected_server_pub is not None and server_pub_bytes != expected_server_pub:
+        raise ValueError("Server public key mismatch — possible MITM attack")
     salt             = welcome_raw[33:49]
     sid_len          = welcome_raw[49]
     session_id       = welcome_raw[50:50 + sid_len]
@@ -195,6 +203,10 @@ def generate_server_keypair() -> tuple[X25519PrivateKey, bytes]:
     """Generate and return (private_key, public_key_bytes)."""
     priv = X25519PrivateKey.generate()
     return priv, _raw_pub(priv.public_key())
+
+def get_pub_bytes(priv: X25519PrivateKey) -> bytes:
+    """Return the raw 32-byte public key for a private key."""
+    return _raw_pub(priv.public_key())
 
 def save_server_key(priv: X25519PrivateKey, path: str) -> None:
     raw = priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())

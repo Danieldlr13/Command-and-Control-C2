@@ -17,6 +17,7 @@ env/
 agent_id.txt
 server_key.pem
 server_key.bin
+server_pub.hex
 *.key
 
 # IDEs

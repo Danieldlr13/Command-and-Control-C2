@@ -1,11 +1,12 @@
-import json
 import os
-import sys
 
 import requests
 
-SERVER = os.environ.get("NEXUS_SERVER", "http://127.0.0.1:8080")
-PROMPT = "nexus> "
+SERVER  = os.environ.get("NEXUS_SERVER", "http://127.0.0.1:8080")
+_APIKEY = os.environ.get("NEXUS_API_KEY", "")
+PROMPT  = "nexus> "
+
+_HEADERS = {"X-Api-Key": _APIKEY} if _APIKEY else {}
 
 HELP = """\
 Commands:
@@ -18,11 +19,11 @@ Commands:
 
 
 def _get(path: str):
-    return requests.get(SERVER + path, timeout=5).json()
+    return requests.get(SERVER + path, headers=_HEADERS, timeout=10).json()
 
 
 def _post(path: str, body: dict):
-    return requests.post(SERVER + path, json=body, timeout=5).json()
+    return requests.post(SERVER + path, json=body, headers=_HEADERS, timeout=10).json()
 
 
 def run() -> None:
