@@ -32,11 +32,14 @@ _PANEL_HTML = """<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0d0d;color:#e0e0e0;font-family:'Courier New',monospace;height:100vh;display:flex;flex-direction:column}
-header{background:#111;border-bottom:1px solid #00ff41;padding:10px 20px;display:flex;align-items:center;gap:16px}
+header{background:#111;border-bottom:1px solid #00ff41;padding:10px 20px;display:flex;align-items:center;gap:16px;flex-shrink:0}
 header h1{color:#00ff41;font-size:1.1em;letter-spacing:3px}
-header .badge{font-size:.7em;color:#444;border:1px solid #222;padding:2px 8px;border-radius:2px}
+.badge{font-size:.7em;color:#444;border:1px solid #222;padding:2px 8px;border-radius:2px}
 .container{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;flex:1;min-height:0}
+/* Left column: agents table (top) + terminal (bottom) */
+.left-col{display:flex;flex-direction:column;gap:12px;min-height:0}
 .panel{background:#111;border:1px solid #222;border-radius:3px;display:flex;flex-direction:column;overflow:hidden}
+.agents-panel{flex:1;min-height:0}
 .panel-title{background:#1a1a1a;border-bottom:1px solid #222;padding:7px 12px;font-size:.7em;color:#666;text-transform:uppercase;letter-spacing:1px}
 table{width:100%;border-collapse:collapse;font-size:.82em}
 th{background:#161616;color:#555;padding:6px 10px;text-align:left;font-size:.7em;text-transform:uppercase;border-bottom:1px solid #222}
@@ -44,29 +47,40 @@ td{padding:7px 10px;border-bottom:1px solid #1a1a1a;cursor:pointer;white-space:n
 tr:hover td{background:#1a1a1a}
 tr.selected td{background:#071a07;border-left:2px solid #00ff41}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
-.online{background:#00ff41;box-shadow:0 0 5px #00ff41}
-.offline{background:#444}
+.dot.online{background:#00ff41;box-shadow:0 0 5px #00ff41}
+.dot.offline{background:#444}
 .jbar{display:inline-block;height:5px;border-radius:2px;vertical-align:middle;margin-right:5px;transition:width .4s,background .4s}
-.task-form{padding:10px;border-top:1px solid #222;display:none}
-.task-form label{font-size:.7em;color:#555;display:block;margin-bottom:4px;text-transform:uppercase}
-.task-form input{background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:6px 10px;width:100%;font-family:inherit;font-size:.83em;outline:none;border-radius:2px}
-.task-form input:focus{border-color:#00ff41}
-.task-form button{background:#00ff41;color:#000;border:none;padding:6px 0;cursor:pointer;font-family:inherit;font-weight:bold;font-size:.8em;margin-top:6px;width:100%;border-radius:2px;letter-spacing:1px}
-.task-form button:hover{background:#00cc33}
-.task-form button:disabled{background:#1a3a1a;color:#00ff41;cursor:not-allowed}
-.toast{position:fixed;bottom:30px;right:20px;background:#1a1a1a;border:1px solid #00ff41;color:#00ff41;padding:8px 14px;font-size:.75em;border-radius:3px;opacity:0;transition:opacity .3s;pointer-events:none}
-.toast.show{opacity:1}
-.toast.err{border-color:#ff4444;color:#ff4444}
-.spinner{display:inline-block;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
+/* Terminal widget */
+.terminal{background:#0a0a0a;border:1px solid #1e3a1e;border-radius:3px;flex-direction:column;height:240px;flex-shrink:0;display:none}
+.terminal.open{display:flex}
+.term-titlebar{background:#111;border-bottom:1px solid #1e3a1e;padding:5px 10px;display:flex;align-items:center;justify-content:space-between;font-size:.7em;color:#555;letter-spacing:1px;flex-shrink:0;user-select:none}
+.term-titlebar .tname{color:#00ff41;text-transform:uppercase}
+.win-btns{display:flex;gap:7px;align-items:center}
+.wbtn{width:11px;height:11px;border-radius:50%}
+.wbtn.wclose{background:#ff5f57}.wbtn.wmin{background:#febc2e}.wbtn.wmax{background:#28c840}
+.term-body{flex:1;overflow-y:auto;padding:6px 10px;font-size:.79em;line-height:1.6}
+.term-body::-webkit-scrollbar{width:3px}
+.term-body::-webkit-scrollbar-thumb{background:#1e3a1e;border-radius:2px}
+.term-input-row{display:flex;align-items:center;padding:6px 10px 8px;border-top:2px solid #1e4a1e;background:#060f06;gap:0;flex-shrink:0}
+.term-prompt{color:#00ff41;white-space:nowrap;font-size:.79em;flex-shrink:0;margin-right:5px}
+#term-input{background:transparent;border:none;outline:none;color:#00ff41;font-family:'Courier New',monospace;font-size:.79em;flex:1;caret-color:#00ff41}
+#term-input::placeholder{color:#1e3a1e}
+.tl{white-space:pre-wrap;word-break:break-all;line-height:1.6}
+.tl.cmd{color:#00ff41}
+.tl.out{color:#c8c8c8}
+.tl.err{color:#ff6666}
+.tl.sys{color:#4a4a4a}
+/* Results */
 .results-body{flex:1;overflow-y:auto;padding:10px}
 .r-entry{background:#161616;border:1px solid #222;border-radius:3px;margin-bottom:8px;padding:8px 10px}
 .r-meta{color:#555;font-size:.7em;margin-bottom:5px}
 .r-out{color:#c8c8c8;white-space:pre-wrap;word-break:break-all;font-size:.8em}
 .r-err{color:#ff6666;white-space:pre-wrap;word-break:break-all;font-size:.8em}
-.ok{color:#00ff41}.err{color:#ff4444}
+.ok{color:#00ff41}.errc{color:#ff4444}
 .empty{color:#333;text-align:center;padding:30px;font-size:.8em}
-.statusbar{background:#0a0a0a;border-top:1px solid #1a1a1a;padding:4px 16px;font-size:.68em;color:#333;display:flex;justify-content:space-between}
+.toast{position:fixed;bottom:30px;right:20px;background:#1a1a1a;border:1px solid #00ff41;color:#00ff41;padding:8px 14px;font-size:.75em;border-radius:3px;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.statusbar{background:#0a0a0a;border-top:1px solid #1a1a1a;padding:4px 16px;font-size:.68em;color:#333;display:flex;justify-content:space-between;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -76,18 +90,31 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
   <span class="badge" id="hdr-count">...</span>
 </header>
 <div class="container">
-  <div class="panel">
-    <div class="panel-title">Agentes</div>
-    <div style="flex:1;overflow-y:auto">
-      <table>
-        <thead><tr><th>Estado</th><th>Agent ID</th><th>Jitter beacon</th><th>Cola</th><th>Inflight</th></tr></thead>
-        <tbody id="agent-rows"><tr><td colspan="5" class="empty">Sin agentes</td></tr></tbody>
-      </table>
+  <div class="left-col">
+    <div class="panel agents-panel">
+      <div class="panel-title">Agentes</div>
+      <div style="flex:1;overflow-y:auto">
+        <table>
+          <thead><tr><th>Estado</th><th>Agent ID</th><th>Jitter beacon</th><th>Cola</th><th>Inflight</th></tr></thead>
+          <tbody id="agent-rows"><tr><td colspan="5" class="empty">Sin agentes</td></tr></tbody>
+        </table>
+      </div>
     </div>
-    <div class="task-form" id="task-form">
-      <label>Agente: <span id="sel-id" style="color:#00ff41"></span></label>
-      <input id="cmd" type="text" placeholder="whoami | !sysinfo | !download <url> <dest> | !help"/>
-      <button id="exec-btn" onclick="sendTask()">&#9654; EJECUTAR</button>
+    <!-- Terminal widget -->
+    <div class="terminal" id="terminal">
+      <div class="term-titlebar">
+        <span>AGENTE: <span class="tname" id="term-title">—</span></span>
+        <span class="win-btns">
+          <span class="wbtn wmin"></span>
+          <span class="wbtn wmax"></span>
+          <span class="wbtn wclose"></span>
+        </span>
+      </div>
+      <div class="term-body" id="term-body"></div>
+      <div class="term-input-row">
+        <span class="term-prompt" id="term-prompt">~$&nbsp;</span>
+        <input id="term-input" type="text" autocomplete="off" spellcheck="false"/>
+      </div>
     </div>
   </div>
   <div class="panel">
@@ -98,32 +125,111 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
 <div class="toast" id="toast"></div>
 <div class="statusbar"><span id="st-left">Conectando...</span><span id="st-right"></span></div>
 <script>
-let sel=null, agents=[], pendingTask=null, activePoll=null;
+let sel=null,agents=[],cmdHist=[],histIdx=-1,waitTask=null;
 const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-function ts2str(ts){return ts?new Date(ts*1000).toLocaleTimeString():''}
+const ts2s=ts=>ts?new Date(ts*1000).toLocaleTimeString():'';
+
 function jBar(ts,st){
-  if(st!=='online')return '<span style="color:#333">offline</span>';
+  if(st!=='online')return'<span style="color:#333">offline</span>';
   const s=Math.floor(Date.now()/1000-ts);
   const w=Math.min(80,(s/10)*80);
   const c=s<8?'#00ff41':s<15?'#ffaa00':'#ff4444';
-  return `<span class="jbar" style="width:${w}px;background:${c}"></span><span style="color:${c}">${s}s</span>`;
+  return`<span class="jbar" style="width:${w}px;background:${c}"></span><span style="color:${c}">${s}s</span>`;
 }
-function toast(msg,isErr=false){
+
+function toast(msg){
   const t=document.getElementById('toast');
-  t.textContent=msg; t.className='toast'+(isErr?' err':'');
-  requestAnimationFrame(()=>{t.classList.add('show')});
+  t.textContent=msg;t.className='toast';
+  requestAnimationFrame(()=>t.classList.add('show'));
   setTimeout(()=>t.classList.remove('show'),2500);
 }
-function setLoading(on){
-  const btn=document.getElementById('exec-btn');
-  btn.disabled=on;
-  btn.innerHTML=on?'<span class="spinner">&#9696;</span> EJECUTANDO...':'&#9654; EJECUTAR';
+
+// ── Terminal ───────────────────────────────────────────────────────────────
+function tprint(text,cls='out'){
+  const b=document.getElementById('term-body');
+  String(text).split('\\n').forEach(line=>{
+    const d=document.createElement('div');
+    d.className='tl '+cls;
+    d.textContent=line;
+    b.appendChild(d);
+  });
+  b.scrollTop=b.scrollHeight;
 }
+
+function openTerm(id){
+  document.getElementById('term-title').textContent=id.toUpperCase();
+  document.getElementById('term-prompt').textContent=id+'@NEXUS-C2:~$ ';
+  document.getElementById('term-body').innerHTML='';
+  tprint(id+'@NEXUS-C2:~$','sys');
+  tprint("Type '!help' to see available commands.",'sys');
+  tprint('','sys');
+  document.getElementById('terminal').classList.add('open');
+  const inp=document.getElementById('term-input');
+  inp.disabled=false;inp.focus();
+}
+
+const tinp=document.getElementById('term-input');
+tinp.addEventListener('keydown',e=>{
+  if(e.key==='ArrowUp'){
+    e.preventDefault();
+    if(histIdx<cmdHist.length-1){
+      histIdx++;
+      tinp.value=cmdHist[cmdHist.length-1-histIdx];
+      setTimeout(()=>tinp.setSelectionRange(tinp.value.length,tinp.value.length),0);
+    }
+  }else if(e.key==='ArrowDown'){
+    e.preventDefault();
+    if(histIdx>0){histIdx--;tinp.value=cmdHist[cmdHist.length-1-histIdx];}
+    else{histIdx=-1;tinp.value='';}
+  }else if(e.key==='Enter'){
+    sendCmd();
+  }else if(e.key==='l'&&e.ctrlKey){
+    e.preventDefault();
+    document.getElementById('term-body').innerHTML='';
+  }
+});
+
+async function sendCmd(){
+  const cmd=tinp.value.trim();
+  if(!cmd||!sel||waitTask)return;
+  if(!cmdHist.length||cmdHist[cmdHist.length-1]!==cmd)cmdHist.push(cmd);
+  histIdx=-1;
+  tprint(sel+'@NEXUS-C2:~$ '+cmd,'cmd');
+  tinp.value='';tinp.disabled=true;
+  try{
+    const r=await fetch('/agents/'+sel+'/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
+    const b=await r.json();
+    if(r.status===429){tprint('Error: cola llena','err');tinp.disabled=false;return;}
+    if(!r.ok){tprint('Error: '+(b.error||r.status),'err');tinp.disabled=false;return;}
+    waitTask=b.task_id;
+    let polls=0;
+    const pid=setInterval(async()=>{
+      polls++;
+      try{
+        const res=await fetch('/agents/'+sel+'/results');
+        const data=await res.json();
+        const found=data.find(x=>x.task_id===waitTask);
+        if(found||polls>24){
+          clearInterval(pid);waitTask=null;
+          if(found){
+            if(found.stdout&&found.stdout.trim())tprint(found.stdout.trimEnd(),'out');
+            if(found.stderr&&found.stderr.trim())tprint(found.stderr.trimEnd(),'err');
+            if(!found.stdout&&!found.stderr)tprint('[exit '+found.exit_code+']',found.exit_code===0?'sys':'err');
+          }else{tprint('Timeout — sin respuesta del agente','err');}
+          tinp.disabled=false;tinp.focus();
+          refreshResults();
+        }
+      }catch(e){}
+    },2000);
+  }catch(e){tprint('Error de red: '+e.message,'err');tinp.disabled=false;}
+}
+
+// ── Agents & Results ───────────────────────────────────────────────────────
 async function refresh(){
   try{
-    const r=await fetch('/agents'); agents=await r.json();
-    const online=agents.filter(a=>a.status==='online').length;
-    document.getElementById('hdr-count').textContent=online+'/'+agents.length+' online';
+    const r=await fetch('/agents');agents=await r.json();
+    const on=agents.filter(a=>a.status==='online').length;
+    document.getElementById('hdr-count').textContent=on+'/'+agents.length+' online';
     document.getElementById('agent-rows').innerHTML=agents.length?agents.map(a=>`
       <tr onclick="pick('${a.agent_id}')"${a.agent_id===sel?' class="selected"':''}>
         <td><span class="dot ${a.status}"></span>${a.status}</td>
@@ -132,65 +238,39 @@ async function refresh(){
         <td>${a.pending_tasks}</td>
         <td>${a.inflight_tasks>0?`<span style="color:#ffaa00;font-weight:bold">${a.inflight_tasks} ↗</span>`:'0'}</td>
       </tr>`).join(''):'<tr><td colspan="5" class="empty">Sin agentes registrados</td></tr>';
-    document.getElementById('st-left').textContent=online+' agente'+(online!==1?'s':'')+' online';
+    document.getElementById('st-left').textContent=on+' agente'+(on!==1?'s':'')+' online';
     document.getElementById('st-right').textContent=new Date().toLocaleTimeString();
-  }catch(e){document.getElementById('st-left').textContent='Sin conexión con el servidor'}
+  }catch(e){document.getElementById('st-left').textContent='Sin conexión con el servidor';}
 }
+
 async function pick(id){
-  if(activePoll){clearInterval(activePoll);activePoll=null;}
-  pendingTask=null; setLoading(false);
-  sel=id;
-  document.getElementById('sel-id').textContent=id;
-  document.getElementById('res-agent').textContent=id;
-  document.getElementById('task-form').style.display='block';
-  await refreshResults(); refresh();
+  if(id===sel)return;
+  waitTask=null;sel=id;cmdHist=[];histIdx=-1;
+  document.getElementById('res-agent').textContent=id.toUpperCase();
+  openTerm(id);
+  await refreshResults();
+  refresh();
 }
+
 async function refreshResults(){
   if(!sel)return;
   try{
     const r=await fetch('/agents/'+sel+'/results');
     const data=await r.json();
     document.getElementById('res-count').textContent=data.length?'('+data.length+')':'';
-    if(!data.length){
-      document.getElementById('results-body').innerHTML='<div class="empty">Sin resultados aún</div>';
-      return;
-    }
-    const prev=Number(document.getElementById('results-body').dataset.count||0);
+    if(!data.length){document.getElementById('results-body').innerHTML='<div class="empty">Sin resultados aún</div>';return;}
     document.getElementById('results-body').innerHTML=[...data].reverse().map(r=>`
       <div class="r-entry">
-        <div class="r-meta">task <b>${(r.task_id||'?').slice(0,8)}</b> &nbsp; exit <span class="${r.exit_code===0?'ok':'err'}">${r.exit_code}</span> &nbsp; ${ts2str(r.ts)}</div>
+        <div class="r-meta">task <b>${(r.task_id||'?').slice(0,8)}</b> &nbsp; exit <span class="${r.exit_code===0?'ok':'errc'}">${r.exit_code}</span> &nbsp; ${ts2s(r.ts)}</div>
         ${r.stdout?`<div class="r-out">${esc(r.stdout.trimEnd())}</div>`:''}
         ${r.stderr?`<div class="r-err">${esc(r.stderr.trimEnd())}</div>`:''}
       </div>`).join('');
-    document.getElementById('results-body').dataset.count=data.length;
-    if(pendingTask && data.length > prev){ setLoading(false); pendingTask=null; }
   }catch(e){}
 }
-async function sendTask(){
-  const inp=document.getElementById('cmd');
-  const cmd=inp.value.trim();
-  if(!cmd||!sel)return;
-  try{
-    const r=await fetch('/agents/'+sel+'/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
-    const body=await r.json();
-    if(r.status===429){toast('Cola llena — intenta en un momento',true);return;}
-    if(!r.ok){toast('Error: '+body.error,true);return;}
-    inp.value='';
-    pendingTask=body.task_id;
-    setLoading(true);
-    toast('Tarea encolada — esperando beacon...');
-    let polls=0;
-    if(activePoll)clearInterval(activePoll);
-    activePoll=setInterval(async()=>{
-      await refreshResults();
-      if(!pendingTask||++polls>12){setLoading(false);pendingTask=null;clearInterval(activePoll);activePoll=null;}
-    },5000);
-  }catch(e){toast('Error de red',true);setLoading(false);}
-}
-document.getElementById('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendTask()});
+
 refresh();
 setInterval(refresh,3000);
-setInterval(()=>{if(sel&&!pendingTask)refreshResults()},5000);
+setInterval(()=>{if(sel&&!waitTask)refreshResults();},5000);
 </script>
 </body>
 </html>"""
