@@ -32,6 +32,9 @@ _MAX_BACKOFF     = 300.0       # 5 min cap on reconnect sleep
 # ── Identity ───────────────────────────────────────────────────────────────────
 
 def load_or_create_agent_id() -> str:
+    # Direct override — useful for multi-agent deployments on the same host
+    if direct := os.environ.get("NEXUS_AGENT_ID", "").strip():
+        return direct
     if os.path.exists(AGENT_ID_FILE):
         with open(AGENT_ID_FILE) as f:
             aid = f.read().strip()

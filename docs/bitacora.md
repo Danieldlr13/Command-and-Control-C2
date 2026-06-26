@@ -10,10 +10,10 @@
 | Fase | Objetivo | Gate de validación | Estado |
 |------|----------|--------------------|--------|
 | 0 | Protocolo y cripto definidos en papel | Equipo entiende el frame y el handshake | ✅ Completada |
-| 1 | Servidor acepta BEACON en claro, imprime en consola | Se ve el beacon llegar | ⬜ Pendiente |
-| 2 | TASK/RESULT en claro: operador manda `whoami`, vuelve la salida | Comando ida y vuelta funciona | ⬜ Pendiente |
-| 3 | Handshake ECDH + cifrado AEAD del canal | Mismo flujo cifrado; Wireshark no ve texto | ⬜ Pendiente |
-| 4 | Múltiples agentes + cola + reconexión | 2-3 agentes simultáneos estables | ⬜ Pendiente |
+| 1 | Servidor acepta BEACON en claro, imprime en consola | Se ve el beacon llegar | ✅ Completada |
+| 2 | TASK/RESULT en claro: operador manda `whoami`, vuelve la salida | Comando ida y vuelta funciona | ✅ Completada |
+| 3 | Handshake ECDH + cifrado AEAD del canal | Mismo flujo cifrado; Wireshark no ve texto | ✅ Completada |
+| 4 | Múltiples agentes + cola + reconexión | 2-3 agentes simultáneos estables | ✅ Completada |
 | 5 | Panel de operador + jitter en beacon | Demo visual lista | ⬜ Pendiente |
 | 6 | Documentación + grabación de video | 4 entregables completos | ⬜ Pendiente |
 

