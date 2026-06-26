@@ -16,6 +16,7 @@ env/
 # Runtime artifacts
 agent_id.txt
 server_key.pem
+server_key.bin
 *.key
 
 # IDEs
