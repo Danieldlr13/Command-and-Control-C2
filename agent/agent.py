@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import platform
 import random
 import socket
 import subprocess
@@ -171,7 +172,7 @@ def run() -> None:
             attempt = 0
 
             while True:
-                beacon = encode_beacon(agent_id, hostname, ts=int(time.time()))
+                beacon = encode_beacon(agent_id, hostname, platform.platform(), ts=int(time.time()))
                 frame  = build_frame(MSG_BEACON, beacon, chacha, agent_nonce)
                 try:
                     raw = _post(transport, frame, sid_hex)
