@@ -14,7 +14,7 @@
 | 2 | TASK/RESULT en claro: operador manda `whoami`, vuelve la salida | Comando ida y vuelta funciona | ✅ Completada |
 | 3 | Handshake ECDH + cifrado AEAD del canal | Mismo flujo cifrado; Wireshark no ve texto | ✅ Completada |
 | 4 | Múltiples agentes + cola + reconexión | 2-3 agentes simultáneos estables | ✅ Completada |
-| 5 | Panel de operador + jitter en beacon | Demo visual lista | ⬜ Pendiente |
+| 5 | Panel de operador + jitter en beacon | Demo visual lista | ✅ Completada |
 | 6 | Documentación + grabación de video | 4 entregables completos | ⬜ Pendiente |
 
 ---
@@ -30,6 +30,8 @@
 | Pre-hackathon | Carpeta del operador: **`console/`** (no `operator/`) | `operator` es un módulo de la stdlib de Python — conflicto de nombres |
 | Pre-hackathon | `info` de HKDF incluye ambas claves públicas | Vincula la `session_key` a la sesión concreta; previene replay |
 | Pre-hackathon | HELLO/WELCOME en formato **binario puro** (no JSON) | Consistencia con el resto del protocolo; P3 y P2 deben respetar este formato |
+| 2026-06-26 | Agente distribuido vía `NEXUS_SERVER_PUB` (env var) en lugar de copiar `server_pub.hex` | El agente corre en máquina diferente al servidor; intercambio manual de la clave pública hex por canal seguro (fuera de banda) |
+| 2026-06-26 | `!persist` corregido para incluir `NEXUS_SERVER` y `NEXUS_SERVER_PUB` en la línea cron | Sin env vars, el agente arrancaba apuntando a `127.0.0.1:8080` y fallaba silenciosamente tras reboot |
 
 ---
 
@@ -40,7 +42,10 @@
 
 | Fase | Problema | Resolución |
 |------|----------|------------|
-| — | — | — |
+| Deploy | `websocket-client` no estaba en `requirements.txt` — ImportError al arrancar el agente | `pip install websocket-client`; pendiente añadir al `requirements.txt` |
+| Deploy | El agente necesita la clave pública del servidor (`server_pub.hex`) para el handshake X25519, pero el fichero solo existe donde corre el servidor | El operador comparte el hex por canal fuera de banda; el agente lo recibe como `NEXUS_SERVER_PUB` env var |
+| Plugins | `!persist` instalaba crontab sin variables de entorno → el agente no sabía a qué servidor conectar tras reboot | Corregido `persist.py`: la línea `@reboot` incluye `NEXUS_SERVER` y `NEXUS_SERVER_PUB` capturados en tiempo de ejecución |
+| Plugins | `!download` confundido con exfiltración — el plugin descarga FROM internet TO el agente, no al revés | Aclarado en docs: `!download <url> <ruta_local>` es dropper. Para exfiltrar usar `cat` + copiar desde panel, o implementar `!upload` |
 
 ---
 
@@ -56,6 +61,10 @@
 | P1 → P2 Fase 3 | `protocol.py` integrado en el agente — handshake completo | — |
 | P4 ↔ P3 Fase 2 | CLI del operador conectada a la API del servidor | — |
 | Demo | Sistema completo con N agentes y panel web funcionando | — |
+| **Prueba real** | Agente en Raspberry Pi conectado a servidor remoto vía ngrok (HTTPS) — handshake X25519 completado, sesión cifrada estable | 2026-06-26 ~17:34 |
+| **Prueba real** | Plugins probados en producción: `!sysinfo`, `!screenshot`, `!persist` — comandos shell ejecutados desde panel | 2026-06-26 ~17:45 |
+| **Prueba real** | Persistencia vía crontab validada (con fix de env vars) — agente sobrevive reboot y reconecta al C2 automáticamente | 2026-06-26 ~18:00 |
+| **Reconocimiento** | SSH puerto 22 detectado abierto en la máquina agente — PasswordAuthentication habilitado por defecto (Raspberry Pi OS) | 2026-06-26 |
 
 ---
 
