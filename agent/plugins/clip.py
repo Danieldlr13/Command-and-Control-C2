@@ -30,18 +30,33 @@ def _read_clipboard() -> tuple[bool, str]:
 
 
 def _write_clipboard(text: str) -> tuple[bool, str]:
+    import time
+
     for tool, args in [
-        ("xclip",  ["xclip", "-selection", "clipboard"]),
-        ("xsel",   ["xsel", "--clipboard", "--input"]),
+        ("xclip",   ["xclip", "-selection", "clipboard"]),
+        ("xsel",    ["xsel", "--clipboard", "--input"]),
         ("wl-copy", ["wl-copy"]),
     ]:
-        if shutil.which(tool):
-            try:
+        if not shutil.which(tool):
+            continue
+        try:
+            if tool == "wl-copy":
+                # wl-copy bloquea indefinidamente (actúa como clipboard owner)
+                # se lanza en background y se verifica leyendo de vuelta
+                proc = subprocess.Popen(args, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc.stdin.write(text.encode())
+                proc.stdin.close()
+                time.sleep(0.1)
+                ok, content = _read_clipboard()
+                if ok and content.strip() == text.strip():
+                    return True, tool
+            else:
                 r = subprocess.run(args, input=text, capture_output=True, text=True, timeout=5)
                 if r.returncode == 0:
                     return True, tool
-            except Exception:
-                continue
+        except Exception:
+            continue
     try:
         import pyperclip
         pyperclip.copy(text)
