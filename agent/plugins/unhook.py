@@ -5,7 +5,9 @@ y procesos AV/EDR conocidos.
 """
 
 import os
+import platform
 import subprocess
+import sys
 
 
 _AV_SIGNATURES = [
@@ -13,15 +15,19 @@ _AV_SIGNATURES = [
     "carbonblack", "cbagent", "sentinel", "sentineld", "cylance",
     "malwarebytes", "eset", "bitdefender", "fsav", "avast",
     "comodo", "fireeye", "xagt", "wdavdaemon",
+    # Windows específicos
+    "mssense", "msmpeng", "mpcmdrun", "mbamservice", "avgnt",
 ]
 
 _HOOK_LIBS = ["frida-agent", "frida_", "libinject", "dyninst", "valgrind", "libpintool"]
 
+_IS_WINDOWS = sys.platform == "win32"
 
-def run(args: str) -> tuple[int, str, str]:
-    results = []
 
-    # 1. LD_PRELOAD
+def _check_ldpreload(results: list) -> None:
+    if _IS_WINDOWS:
+        results.append("[+] LD_PRELOAD no aplica en Windows")
+        return
     ld = os.environ.get("LD_PRELOAD", "")
     if ld:
         results.append(f"[!] LD_PRELOAD activo: {ld}")
@@ -30,7 +36,20 @@ def run(args: str) -> tuple[int, str, str]:
     else:
         results.append("[+] LD_PRELOAD limpio")
 
-    # 2. Anti-debug: TracerPid en /proc/self/status
+
+def _check_debugger(results: list) -> None:
+    if _IS_WINDOWS:
+        try:
+            import ctypes
+            is_dbg = ctypes.windll.kernel32.IsDebuggerPresent()
+            if is_dbg:
+                results.append("[!] Debugger detectado (IsDebuggerPresent=True)")
+            else:
+                results.append("[+] Sin debugger activo (IsDebuggerPresent=False)")
+        except Exception as exc:
+            results.append(f"[?] No se pudo comprobar debugger en Windows: {exc}")
+        return
+
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -44,7 +63,39 @@ def run(args: str) -> tuple[int, str, str]:
     except OSError:
         results.append("[?] No se pudo leer /proc/self/status")
 
-    # 3. Librerías sospechosas en el mapa de memoria
+
+def _check_hook_libs(results: list) -> None:
+    if _IS_WINDOWS:
+        try:
+            import ctypes
+            psapi = ctypes.windll.psapi
+            kernel32 = ctypes.windll.kernel32
+            buf = (ctypes.c_char_p * 1024)()
+            count = ctypes.c_ulong()
+            psapi.EnumProcessModules(
+                kernel32.GetCurrentProcess(),
+                ctypes.byref(buf), ctypes.sizeof(buf), ctypes.byref(count)
+            )
+            # Si falla, fallback silencioso
+        except Exception:
+            pass
+        # En Windows leemos los módulos cargados con tasklist /m en el proceso actual
+        try:
+            pid = os.getpid()
+            r = subprocess.run(
+                ["tasklist", "/m", "/fi", f"PID eq {pid}"],
+                capture_output=True, text=True, timeout=5
+            )
+            mods = r.stdout.lower()
+            found = [lib for lib in _HOOK_LIBS if lib in mods]
+            if found:
+                results.append(f"[!] Librerías de hooking detectadas: {found}")
+            else:
+                results.append("[+] No se detectaron librerías de hooking en módulos cargados")
+        except Exception as exc:
+            results.append(f"[?] No se pudo listar módulos del proceso: {exc}")
+        return
+
     try:
         with open("/proc/self/maps") as f:
             maps = f.read().lower()
@@ -56,9 +107,17 @@ def run(args: str) -> tuple[int, str, str]:
     except OSError:
         results.append("[?] No se pudo leer /proc/self/maps")
 
-    # 4. Procesos AV/EDR activos
+
+def _check_av_processes(results: list) -> None:
     try:
-        r = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+        if _IS_WINDOWS:
+            r = subprocess.run(
+                ["tasklist", "/fo", "csv", "/nh"],
+                capture_output=True, text=True, timeout=5
+            )
+        else:
+            r = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+
         found_av = []
         for line in r.stdout.lower().splitlines():
             for sig in _AV_SIGNATURES:
@@ -73,4 +132,11 @@ def run(args: str) -> tuple[int, str, str]:
     except Exception as exc:
         results.append(f"[?] No se pudo listar procesos: {exc}")
 
+
+def run(args: str) -> tuple[int, str, str]:
+    results = [f"[*] Plataforma: {platform.system()} {platform.release()}"]
+    _check_ldpreload(results)
+    _check_debugger(results)
+    _check_hook_libs(results)
+    _check_av_processes(results)
     return 0, "\n".join(results), ""

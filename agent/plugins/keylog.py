@@ -132,7 +132,8 @@ def _ensure_pynput():
     import subprocess, sys
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "pynput", "--quiet"],
+            [sys.executable, "-m", "pip", "install", "pynput", "--quiet",
+             "--break-system-packages"],
             capture_output=True, timeout=60, check=True,
         )
     except Exception as exc:
