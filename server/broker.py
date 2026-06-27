@@ -191,9 +191,9 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
 .tab-btn:hover{color:#00cc33;background:#0a110a}
 .tab-btn.active{color:#00ff41;border-bottom-color:#00ff41;background:#060e06;font-weight:700}
 /* ── NexusAI floating bubble ─────────────────────────────────────────── */
-#ai-bubble{position:fixed;bottom:52px;right:18px;width:42px;height:42px;border-radius:50%;background:#0d1a0d;border:2px solid #00ff41;color:#00ff41;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:1000;box-shadow:0 0 18px #00ff4155;transition:transform .15s,box-shadow .15s;user-select:none}
+#ai-bubble{position:fixed;bottom:52px;right:72px;width:42px;height:42px;border-radius:50%;background:#0d1a0d;border:2px solid #00ff41;color:#00ff41;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:1000;box-shadow:0 0 18px #00ff4155;transition:transform .15s,box-shadow .15s;user-select:none}
 #ai-bubble:hover{transform:scale(1.1);box-shadow:0 0 28px #00ff4188}
-#ai-widget{position:fixed;bottom:104px;right:18px;width:340px;height:460px;background:#08080f;border:1px solid #00ff4155;border-radius:10px;display:none;flex-direction:column;z-index:999;box-shadow:0 8px 40px rgba(0,255,65,.18);overflow:hidden}
+#ai-widget{position:fixed;bottom:104px;right:72px;width:340px;height:460px;background:#08080f;border:1px solid #00ff4155;border-radius:10px;display:none;flex-direction:column;z-index:999;box-shadow:0 8px 40px rgba(0,255,65,.18);overflow:hidden}
 #ai-widget.open{display:flex}
 #ai-header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #11113a;background:#0a0f0a;flex-shrink:0}
 #ai-header span{color:#00ff41;font-size:.78em;letter-spacing:2px;text-transform:uppercase;flex:1}
@@ -745,7 +745,10 @@ async function aiSend(){
     if(data.error){
       thinking.innerHTML = `<span style="color:#ff4444">Error: ${esc(data.error)}</span>`;
     } else {
-      thinking.innerHTML = aiMarkdown(data.response);
+      const badge = data.provider==='openrouter'
+        ? '<br><span style="color:#33334a;font-size:.72em;font-style:italic">↩ via OpenRouter (Gemini no disponible)</span>'
+        : '';
+      thinking.innerHTML = aiMarkdown(data.response) + badge;
       _aiHistory.push({role:'user', content: text});
       _aiHistory.push({role:'assistant', content: data.response});
       if(_aiHistory.length > 20) _aiHistory = _aiHistory.slice(-20);
