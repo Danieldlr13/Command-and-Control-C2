@@ -784,8 +784,10 @@ MAX_RESULTS      = 500
 MAX_OUTPUT_BYTES = 64 * 1024
 OPERATOR_API_KEY = os.environ.get("NEXUS_API_KEY", "")
 ALLOW_CLEAR      = os.environ.get("NEXUS_ALLOW_CLEAR", "0") == "1"
-GEMINI_API_KEY   = os.environ.get("GEMINI_API_KEY", "")
-DNS_PORT         = int(os.environ.get("NEXUS_DNS_PORT", "5354"))
+GEMINI_API_KEY     = os.environ.get("GEMINI_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL   = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+DNS_PORT           = int(os.environ.get("NEXUS_DNS_PORT", "5354"))
 DNS_DOMAIN       = b"n\x02c2\x00"  # encoded "n.c2" label sequence
 
 # ---------------------------------------------------------------------------
@@ -1286,10 +1288,38 @@ También puedes usar comandos shell arbitrarios (ls, ps aux, cat /etc/passwd, et
 Cuando el operador describa un objetivo, sugiere la secuencia de comandos más eficiente."""
 
 
+async def _call_openrouter(messages: list) -> str:
+    """Llama a OpenRouter como fallback. Lanza excepción si falla."""
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY no configurada")
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": messages,
+        "max_tokens": 1024,
+        "temperature": 0.7,
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://nexus-c2",
+        "X-Title": "Nexus C2",
+    }
+    async with aiohttp.ClientSession() as s:
+        async with s.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=payload, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as r:
+            data = await r.json()
+    if "error" in data:
+        raise RuntimeError(data["error"].get("message", "OpenRouter error"))
+    return data["choices"][0]["message"]["content"]
+
+
 async def api_gemini_proxy(request: web.Request) -> web.Response:
-    """POST /ai — proxy seguro a Gemini 2.0 Flash. La API key nunca llega al frontend."""
-    if not GEMINI_API_KEY:
-        return web.json_response({"error": "GEMINI_API_KEY no configurada en el servidor"}, status=503)
+    """POST /ai — proxy a Gemini 2.5 Flash Lite con fallback a OpenRouter."""
+    if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
+        return web.json_response({"error": "Sin API keys configuradas (GEMINI_API_KEY / OPENROUTER_API_KEY)"}, status=503)
     try:
         body    = await request.json()
         message = str(body.get("message", "")).strip()
@@ -1299,30 +1329,44 @@ async def api_gemini_proxy(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "body JSON inválido"}, status=400)
 
-    # Construir contents: historial (máx 10 msgs) + mensaje actual
-    contents = []
+    # Historial en formato OpenAI (compatible con ambos proveedores)
+    messages = [{"role": "system", "content": _GEMINI_SYSTEM}]
     for h in history[-10:]:
-        role = "model" if h.get("role") in ("assistant", "model") else "user"
-        contents.append({"role": role, "parts": [{"text": str(h.get("content", ""))}]})
-    contents.append({"role": "user", "parts": [{"text": message}]})
+        role = "assistant" if h.get("role") in ("assistant", "model") else "user"
+        messages.append({"role": role, "content": str(h.get("content", ""))})
+    messages.append({"role": "user", "content": message})
 
-    payload = {
-        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
-    }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+    # ── Intento 1: Gemini via REST nativo ────────────────────────────────
+    if GEMINI_API_KEY:
+        contents = [{"role": ("model" if m["role"] == "assistant" else m["role"]),
+                     "parts": [{"text": m["content"]}]}
+                    for m in messages if m["role"] != "system"]
+        payload = {
+            "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    data = await r.json()
+            if r.status == 200:
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return web.json_response({"response": text, "provider": "gemini"})
+            # 429 / quota → caemos al fallback
+            err_msg = data.get("error", {}).get("message", "")
+            log.warning("Gemini error %d: %s — usando fallback OpenRouter", r.status, err_msg)
+        except Exception as exc:
+            log.warning("Gemini excepción: %s — usando fallback OpenRouter", exc)
+
+    # ── Intento 2: OpenRouter fallback ───────────────────────────────────
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                data = await r.json()
-        if r.status != 200:
-            return web.json_response({"error": data.get("error", {}).get("message", "Gemini error")}, status=502)
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return web.json_response({"response": text})
+        text = await _call_openrouter(messages)
+        return web.json_response({"response": text, "provider": "openrouter"})
     except Exception as exc:
-        log.error("Gemini proxy error: %s", exc)
-        return web.json_response({"error": "Error al contactar Gemini"}, status=502)
+        log.error("OpenRouter error: %s", exc)
+        return web.json_response({"error": f"Ambos proveedores fallaron: {exc}"}, status=502)
 
 
 async def handle_panel(request: web.Request) -> web.Response:
