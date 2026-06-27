@@ -742,11 +742,11 @@ async function aiSend(){
       body: JSON.stringify({message: text, history: _aiHistory})
     });
     const data = await r.json();
-    if(data.error){
-      thinking.innerHTML = `<span style="color:#ff4444">Error: ${esc(data.error)}</span>`;
+    if(data.retry){
+      thinking.innerHTML = '<span style="color:#6666a0;font-style:italic">NexusAI no está disponible en este momento. Por favor reintenta en un momento.</span>';
     } else {
       const badge = data.provider==='openrouter'
-        ? '<br><span style="color:#33334a;font-size:.72em;font-style:italic">↩ via OpenRouter (Gemini no disponible)</span>'
+        ? '<br><span style="color:#33334a;font-size:.72em;font-style:italic">↩ via OpenRouter</span>'
         : '';
       thinking.innerHTML = aiMarkdown(data.response) + badge;
       _aiHistory.push({role:'user', content: text});
@@ -1347,59 +1347,65 @@ Si alguien pregunta algo fuera de este scope (matemáticas, historia, cocina, c�
 No hagas excepciones. No resuelvas matemáticas, no escribas poemas, no expliques conceptos generales."""
 
 
-async def _call_openrouter(messages: list) -> str:
-    """Llama a OpenRouter como fallback. Lanza excepción si falla."""
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY no configurada")
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": messages,
-        "max_tokens": 1024,
-        "temperature": 0.7,
-    }
+_OPENROUTER_CHAIN = [
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-4-27b-it:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+]
+
+
+async def _call_openrouter(messages: list, model: str) -> str:
+    """Llama a un modelo específico de OpenRouter. Lanza excepción si falla."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://nexus-c2",
         "X-Title": "Nexus C2",
     }
+    payload = {"model": model, "messages": messages, "max_tokens": 1024, "temperature": 0.7}
     async with aiohttp.ClientSession() as s:
         async with s.post(
             "https://openrouter.ai/api/v1/chat/completions",
             json=payload, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=30)
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             data = await r.json()
     if "error" in data:
-        raise RuntimeError(data["error"].get("message", "OpenRouter error"))
-    return data["choices"][0]["message"]["content"]
+        raise RuntimeError(data["error"].get("message", "error"))
+    text = data["choices"][0]["message"]["content"]
+    if not text:
+        raise RuntimeError("respuesta vacía")
+    return text
 
 
 async def api_gemini_proxy(request: web.Request) -> web.Response:
-    """POST /ai — proxy a Gemini 2.5 Flash Lite con fallback a OpenRouter."""
+    """POST /ai — Gemini primero, luego cadena de fallback OpenRouter."""
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
-        return web.json_response({"error": "Sin API keys configuradas (GEMINI_API_KEY / OPENROUTER_API_KEY)"}, status=503)
+        return web.json_response({"retry": True}, status=200)
     try:
         body    = await request.json()
         message = str(body.get("message", "")).strip()
         history = body.get("history", [])
         if not message:
-            return web.json_response({"error": "mensaje vacío"}, status=400)
+            return web.json_response({"retry": True}, status=200)
     except Exception:
-        return web.json_response({"error": "body JSON inválido"}, status=400)
+        return web.json_response({"retry": True}, status=200)
 
-    # Historial en formato OpenAI (compatible con ambos proveedores)
+    # Historial formato OpenAI (compatible Gemini y OpenRouter)
     messages = [{"role": "system", "content": _GEMINI_SYSTEM}]
     for h in history[-10:]:
         role = "assistant" if h.get("role") in ("assistant", "model") else "user"
         messages.append({"role": role, "content": str(h.get("content", ""))})
     messages.append({"role": "user", "content": message})
 
-    # ── Intento 1: Gemini via REST nativo ────────────────────────────────
+    # ── Intento 1: Gemini 2.5 Flash Lite ─────────────────────────────────
     if GEMINI_API_KEY:
-        contents = [{"role": ("model" if m["role"] == "assistant" else m["role"]),
-                     "parts": [{"text": m["content"]}]}
-                    for m in messages if m["role"] != "system"]
+        contents = [
+            {"role": ("model" if m["role"] == "assistant" else m["role"]),
+             "parts": [{"text": m["content"]}]}
+            for m in messages if m["role"] != "system"
+        ]
         payload = {
             "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
             "contents": contents,
@@ -1412,20 +1418,24 @@ async def api_gemini_proxy(request: web.Request) -> web.Response:
                     data = await r.json()
             if r.status == 200:
                 text = data["candidates"][0]["content"]["parts"][0]["text"]
-                return web.json_response({"response": text, "provider": "gemini"})
-            # 429 / quota → caemos al fallback
-            err_msg = data.get("error", {}).get("message", "")
-            log.warning("Gemini error %d: %s — usando fallback OpenRouter", r.status, err_msg)
+                if text:
+                    return web.json_response({"response": text, "provider": "gemini"})
+            log.warning("Gemini %d — pasando a cadena OpenRouter", r.status)
         except Exception as exc:
-            log.warning("Gemini excepción: %s — usando fallback OpenRouter", exc)
+            log.warning("Gemini excepción: %s — pasando a cadena OpenRouter", exc)
 
-    # ── Intento 2: OpenRouter fallback ───────────────────────────────────
-    try:
-        text = await _call_openrouter(messages)
-        return web.json_response({"response": text, "provider": "openrouter"})
-    except Exception as exc:
-        log.error("OpenRouter error: %s", exc)
-        return web.json_response({"error": f"Ambos proveedores fallaron: {exc}"}, status=502)
+    # ── Cadena de fallback OpenRouter ─────────────────────────────────────
+    if OPENROUTER_API_KEY:
+        for model in _OPENROUTER_CHAIN:
+            try:
+                text = await _call_openrouter(messages, model)
+                log.info("OpenRouter OK modelo=%s", model)
+                return web.json_response({"response": text, "provider": "openrouter"})
+            except Exception as exc:
+                log.warning("OpenRouter %s falló: %s — siguiente modelo", model, exc)
+
+    # Todos fallaron — respuesta neutral sin alarmar
+    return web.json_response({"retry": True}, status=200)
 
 
 async def handle_panel(request: web.Request) -> web.Response:
