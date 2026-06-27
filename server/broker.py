@@ -190,24 +190,32 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
 .tab-btn{background:transparent;border:none;border-bottom:3px solid transparent;color:#8888b8;font-family:inherit;font-size:.75em;letter-spacing:1px;text-transform:uppercase;padding:0 20px;height:38px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .tab-btn:hover{color:#00cc33;background:#0a110a}
 .tab-btn.active{color:#00ff41;border-bottom-color:#00ff41;background:#060e06;font-weight:700}
-/* ── NexusAI ──────────────────────────────────────────────────────────── */
-#pane-ai{display:none;flex-direction:column;flex:1;min-height:0;background:#06060d}
-#ai-msgs{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
-#ai-msgs::-webkit-scrollbar{width:4px}
+/* ── NexusAI floating bubble ─────────────────────────────────────────── */
+#ai-bubble{position:fixed;bottom:52px;right:18px;width:42px;height:42px;border-radius:50%;background:#0d1a0d;border:2px solid #00ff41;color:#00ff41;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:1000;box-shadow:0 0 18px #00ff4155;transition:transform .15s,box-shadow .15s;user-select:none}
+#ai-bubble:hover{transform:scale(1.1);box-shadow:0 0 28px #00ff4188}
+#ai-widget{position:fixed;bottom:104px;right:18px;width:340px;height:460px;background:#08080f;border:1px solid #00ff4155;border-radius:10px;display:none;flex-direction:column;z-index:999;box-shadow:0 8px 40px rgba(0,255,65,.18);overflow:hidden}
+#ai-widget.open{display:flex}
+#ai-header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #11113a;background:#0a0f0a;flex-shrink:0}
+#ai-header span{color:#00ff41;font-size:.78em;letter-spacing:2px;text-transform:uppercase;flex:1}
+#ai-close{background:none;border:none;color:#444466;font-size:16px;cursor:pointer;padding:0 4px;line-height:1}
+#ai-close:hover{color:#00ff41}
+#ai-msgs{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+#ai-msgs::-webkit-scrollbar{width:3px}
 #ai-msgs::-webkit-scrollbar-thumb{background:#00ff4133;border-radius:2px}
-.ai-msg{padding:8px 12px;border-radius:6px;font-size:.82em;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-width:92%}
-.ai-msg.user{background:#0d1a0d;border:1px solid #00ff4133;color:#c0e0c0;align-self:flex-end}
-.ai-msg.bot{background:#0a0a18;border:1px solid #22224a;color:#c0c0e8;align-self:flex-start}
-.ai-msg.bot code{background:#12121e;color:#00ff41;padding:1px 5px;border-radius:3px;font-size:.95em}
-.ai-msg.bot pre{background:#0d0d1a;border:1px solid #22224a;border-radius:4px;padding:8px;overflow-x:auto;margin:6px 0}
+.ai-msg{padding:7px 11px;border-radius:8px;font-size:.8em;line-height:1.55;word-break:break-word;max-width:88%}
+.ai-msg.user{background:#0d1a0d;border:1px solid #00ff4133;color:#c0e0c0;align-self:flex-end;border-bottom-right-radius:2px}
+.ai-msg.bot{background:#0a0a18;border:1px solid #1e1e3a;color:#c0c0e8;align-self:flex-start;border-bottom-left-radius:2px}
+.ai-msg.bot code{background:#12121e;color:#00ff41;padding:1px 4px;border-radius:3px}
+.ai-msg.bot pre{background:#0d0d1a;border:1px solid #1e1e3a;border-radius:4px;padding:7px;overflow-x:auto;margin:5px 0;white-space:pre-wrap}
 .ai-msg.bot pre code{background:none;padding:0}
-.ai-thinking{color:#4a4a7a;font-style:italic;font-size:.78em;align-self:flex-start;padding:4px 12px}
-#ai-input-row{display:flex;gap:6px;padding:8px 10px;border-top:1px solid #11113a;background:#08080f}
-#ai-input{flex:1;background:#0d0d18;border:1px solid #22224a;border-radius:4px;color:#c0c0e8;font-family:inherit;font-size:.82em;padding:7px 10px;resize:none;height:36px;outline:none;transition:border-color .15s}
-#ai-input:focus{border-color:#00ff4166}
-#ai-send{background:#00330d;border:1px solid #00ff4155;color:#00ff41;border-radius:4px;padding:0 14px;height:36px;cursor:pointer;font-family:inherit;font-size:.8em;letter-spacing:1px;transition:all .15s}
+.ai-thinking{color:#3a3a6a;font-style:italic;font-size:.76em;align-self:flex-start;padding:3px 10px;animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:.4}50%{opacity:1}}
+#ai-input-row{display:flex;gap:5px;padding:7px 8px;border-top:1px solid #11113a;background:#08080f;flex-shrink:0}
+#ai-input{flex:1;background:#0d0d18;border:1px solid #22224a;border-radius:6px;color:#c0c0e8;font-family:inherit;font-size:.8em;padding:6px 9px;resize:none;height:34px;outline:none;transition:border-color .15s;line-height:1.4}
+#ai-input:focus{border-color:#00ff4155}
+#ai-send{background:#00330d;border:1px solid #00ff4155;color:#00ff41;border-radius:6px;padding:0 12px;height:34px;cursor:pointer;font-family:inherit;font-size:.75em;letter-spacing:1px;white-space:nowrap;transition:all .15s}
 #ai-send:hover{background:#004d14;border-color:#00ff41}
-#ai-send:disabled{opacity:.4;cursor:default}
+#ai-send:disabled{opacity:.35;cursor:default}
 /* ── Victim map ───────────────────────────────────────────────────────── */
 #victim-map{background:#06060d}
 .leaflet-container{background:#06060d!important;font-family:inherit}
@@ -330,7 +338,6 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
     <div class="panel-title" style="gap:0;padding:0">
       <button class="tab-btn active" id="tab-res" onclick="switchTab('res')">Resultados</button>
       <button class="tab-btn" id="tab-map" onclick="switchTab('map')">&#127758; Equipos Vulnerados</button>
-      <button class="tab-btn" id="tab-ai" onclick="switchTab('ai')">&#129302; NexusAI</button>
       <span style="flex:1"></span>
       <span id="res-agent" style="color:#00cc33;font-size:.72em;padding:0 14px">selecciona un agente</span>
       <span id="res-count" style="color:#6666a0;font-size:.72em;padding-right:14px"></span>
@@ -339,17 +346,26 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
     <div id="pane-map" style="flex:1;min-height:0;display:none;position:relative">
       <div id="victim-map" style="width:100%;height:100%"></div>
     </div>
-    <div id="pane-ai" style="flex:1;min-height:0;display:none;flex-direction:column">
-      <div id="ai-msgs"><div class="ai-msg bot">&#129302; <b>NexusAI</b> listo. Pregúntame qué comandos usar o cómo lograr un objetivo en el agente seleccionado.</div></div>
-      <div id="ai-input-row">
-        <textarea id="ai-input" placeholder="Pregunta algo... (Enter envía, Shift+Enter nueva línea)" rows="1"></textarea>
-        <button id="ai-send" onclick="aiSend()">ENVIAR</button>
-      </div>
-    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <div class="statusbar"><span id="st-left">Conectando...</span><span id="st-right"></span></div>
+
+<!-- NexusAI floating widget -->
+<div id="ai-bubble" title="NexusAI" onclick="aiToggle()">&#129302;</div>
+<div id="ai-widget">
+  <div id="ai-header">
+    <span>&#129302; NEXUSAI</span>
+    <button id="ai-close" onclick="aiToggle()" title="Cerrar">&#10005;</button>
+  </div>
+  <div id="ai-msgs">
+    <div class="ai-msg bot">Hola, soy <b>NexusAI</b>. Pregúntame qué comandos usar o cómo lograr un objetivo en el agente seleccionado.</div>
+  </div>
+  <div id="ai-input-row">
+    <textarea id="ai-input" placeholder="Pregunta algo... (Enter para enviar)" rows="1"></textarea>
+    <button id="ai-send" onclick="aiSend()">&#9654;</button>
+  </div>
+</div>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -611,12 +627,9 @@ setInterval(()=>{if(sel&&!waitTask)refreshResults();},5000);
 function switchTab(name){
   document.getElementById('pane-res').style.display = name==='res'?'':'none';
   document.getElementById('pane-map').style.display = name==='map'?'':'none';
-  document.getElementById('pane-ai').style.display  = name==='ai'?'flex':'none';
   document.getElementById('tab-res').classList.toggle('active', name==='res');
   document.getElementById('tab-map').classList.toggle('active', name==='map');
-  document.getElementById('tab-ai').classList.toggle('active',  name==='ai');
   if(name==='map'){ initMap(); pollGeo(); }
-  if(name==='ai'){ document.getElementById('ai-input').focus(); }
 }
 
 // ── Victim map ────────────────────────────────────────────────────────
@@ -677,8 +690,14 @@ async function fetchGeo(){
   }catch(_){}
 }
 
-// ── NexusAI ───────────────────────────────────────────────────────────
+// ── NexusAI floating widget ───────────────────────────────────────────
 let _aiHistory = [];
+
+function aiToggle(){
+  const w = document.getElementById('ai-widget');
+  w.classList.toggle('open');
+  if(w.classList.contains('open')) document.getElementById('ai-input').focus();
+}
 
 function aiMarkdown(text){
   // Renderiza bloques de código y código inline con estilos básicos
@@ -1292,7 +1311,7 @@ async def api_gemini_proxy(request: web.Request) -> web.Response:
         "contents": contents,
         "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
