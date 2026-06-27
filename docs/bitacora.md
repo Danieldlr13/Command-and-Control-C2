@@ -46,6 +46,9 @@
 | Deploy | El agente necesita la clave pública del servidor (`server_pub.hex`) para el handshake X25519, pero el fichero solo existe donde corre el servidor | El operador comparte el hex por canal fuera de banda; el agente lo recibe como `NEXUS_SERVER_PUB` env var |
 | Plugins | `!persist` instalaba crontab sin variables de entorno → el agente no sabía a qué servidor conectar tras reboot | Corregido `persist.py`: la línea `@reboot` incluye `NEXUS_SERVER` y `NEXUS_SERVER_PUB` capturados en tiempo de ejecución |
 | Plugins | `!download` confundido con exfiltración — el plugin descarga FROM internet TO el agente, no al revés | Aclarado en docs: `!download <url> <ruta_local>` es dropper. Para exfiltrar usar `cat` + copiar desde panel, o implementar `!upload` |
+| Plugins | `!clip write` reportaba exit=1 aunque sí escribía el portapapeles — `wl-copy` bloquea indefinidamente con `subprocess.run` y disparaba `TimeoutExpired` | Cambiado a `subprocess.Popen` para lanzarlo en background; se verifica leyendo el portapapeles de vuelta (`_read_clipboard`) antes de retornar éxito. Fix en `clip.py`. |
+| Plugins | `!keylog start` fallaba con mensaje hardcodeado cuando `pynput` no estaba instalado | `_start_listener` ahora intenta auto-instalar `pynput` con pip; si falla propaga el error real. Fix en `keylog.py`. |
+| Plugins | **PENDIENTE** `!keylog` en Wayland (Fedora 44 KDE) solo captura teclas especiales (alt, ctrl, shift, enter, backspace) — las letras normales no aparecen | Wayland bloquea por diseño el acceso al teclado entre aplicaciones. Workarounds posibles: (1) arrancar el agente con `XDG_SESSION_TYPE=x11` para forzar XWayland; (2) probar en agente Windows donde pynput captura sin restricciones; (3) investigar uso de `evdev` directo sobre `/dev/input/eventX` (requiere root o grupo `input`). **Asignado a quien tenga acceso a agente Windows o sesión X11.** |
 
 ---
 

