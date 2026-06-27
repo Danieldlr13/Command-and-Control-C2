@@ -79,7 +79,7 @@ WantedBy=default.target
             content = f.read()
         if marker in content:
             return 0, "Persistencia ya instalada (~/.bashrc).", ""
-        append = f"\n{marker}\n({full_cmd} &) 2>/dev/null\n"
+        append = f"\n{marker}\npgrep -f 'python -m agent' > /dev/null 2>&1 || ({full_cmd} &) 2>/dev/null\n"
         with open(bashrc, "a") as f:
             f.write(append)
         return 0, f"Persistencia instalada via ~/.bashrc (se activa en próximo login).", ""

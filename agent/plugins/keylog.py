@@ -86,25 +86,28 @@ def _start_evdev():
     _evdev_stop = stop_evt
 
     def _reader():
+        import select
         shift = False
         try:
-            for event in kbd.read_loop():
-                if stop_evt.is_set():
-                    break
-                if event.type != ecodes.EV_KEY:
+            while not stop_evt.is_set():
+                r, _, _ = select.select([kbd.fd], [], [], 0.5)
+                if not r:
                     continue
-                ke = categorize(event)
-                kc = ke.keycode if isinstance(ke.keycode, str) else ke.keycode[0]
-                if ke.keystate == ke.key_down:
-                    if kc in ("KEY_LSHIFT", "KEY_RSHIFT"):
-                        shift = True
-                    else:
-                        char = (_EVDEV_SHIFT if shift else _EVDEV_CHARS).get(kc, f"[{kc}]")
-                        with _lock:
-                            _buffer.append(char)
-                elif ke.keystate == ke.key_up:
-                    if kc in ("KEY_LSHIFT", "KEY_RSHIFT"):
-                        shift = False
+                for event in kbd.read(blocking=False):
+                    if event.type != ecodes.EV_KEY:
+                        continue
+                    ke = categorize(event)
+                    kc = ke.keycode if isinstance(ke.keycode, str) else ke.keycode[0]
+                    if ke.keystate == ke.key_down:
+                        if kc in ("KEY_LSHIFT", "KEY_RSHIFT"):
+                            shift = True
+                        else:
+                            char = (_EVDEV_SHIFT if shift else _EVDEV_CHARS).get(kc, f"[{kc}]")
+                            with _lock:
+                                _buffer.append(char)
+                    elif ke.keystate == ke.key_up:
+                        if kc in ("KEY_LSHIFT", "KEY_RSHIFT"):
+                            shift = False
         except Exception:
             pass
 
