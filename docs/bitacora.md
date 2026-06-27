@@ -59,6 +59,61 @@
 
 ---
 
+## Mejoras post-hackathon
+
+### 2026-06-26 — Plugin `!screenshot`: captura silenciosa multiplataforma
+
+**Archivos:** `agent/plugins/screenshot.py`
+
+**Por qué se hizo:**
+La versión original (`_try_system_tools` + `_try_mss`) tenía tres problemas de campo:
+
+1. **No era silenciosa.** `gnome-screenshot` y `spectacle` sin flags adecuados abren una ventana de previsualización o emiten un sonido del obturador, lo que delata la ejecución ante el usuario del equipo comprometido.
+2. **Sin cobertura multiplataforma.** Sólo corría en Linux; no había ruta para Windows ni macOS.
+3. **Detección Wayland frágil.** Dependía únicamente de `XDG_SESSION_TYPE`, que en sesiones gráficas remotas o entornos sin systemd puede estar vacía, cayendo silenciosamente en la cadena incorrecta.
+
+**Qué se cambió (primera pasada):**
+- Funciones por plataforma separadas: `_linux_wayland`, `_linux_x11`, `_linux_mss`, `_windows`, `_macos`.
+- macOS usa `screencapture -x` (suprime sonido y notificación del sistema).
+- Windows usa `Pillow.ImageGrab` (Python puro, sin notificación).
+- Linux Wayland prioriza `grim` (nativo, completamente silencioso).
+- Linux X11 prioriza `scrot` (silencioso por defecto).
+- `mss` como último recurso en Linux (Python puro, sin UI).
+
+**Qué se cambió (segunda pasada — refactorización):**
+- Se centralizó el manejo de excepciones en `_try(cmd, out_path)` para eliminar el patrón `try/except FileNotFoundError` repetido en cada función.
+- `_mss()` y `_pillow()` reciben `out_path` como parámetro en lugar de depender del global `_OUT`, lo que permite reutilizarlas en Windows con ruta distinta.
+- Cadena Wayland ampliada: `grim → spectacle -b -n → import (ImageMagick) → mss`.
+- Cadena X11 ampliada: `scrot → spectacle -b -n → import → mss → gnome-screenshot` (gnome-screenshot al final porque puede mostrar notificación).
+- Fallback `loginctl show-session` para detectar Wayland cuando `XDG_SESSION_TYPE` está vacía (entornos sin D-Bus de usuario o sesiones root).
+- Mensaje de error accionable con instrucciones de instalación por OS (`dnf install grim`, `dnf install scrot`, `pip install mss`).
+
+---
+
+### 2026-06-26 — Panel de operador: barra de plugins y dropdown de shell rápido
+
+**Archivos:** `server/broker.py` (sección `_PANEL_HTML`)
+
+**Por qué se hizo:**
+El terminal del panel requería que el operador recordara y escribiera manualmente cada nombre de plugin (`!sysinfo`, `!screenshot`, etc.) y cada comando de reconocimiento habitual (`whoami`, `id`, `ps aux`…). Durante una operación bajo presión esto genera fricción, errores tipográficos y retraso.
+
+**Qué se cambió:**
+
+| Componente | Cambio | Razón |
+|------------|--------|-------|
+| CSS `.plugin-bar` / `.plugin-btn` | Barra de botones de plugins en la parte inferior del terminal | Acceso con un clic a los plugins más usados sin necesidad de recordar la sintaxis |
+| CSS `.plugin-btn.needs-arg` | Color ámbar para botones que requieren un argumento adicional | Distinción visual inmediata entre plugins autoejecutables y los que necesitan completar el comando |
+| CSS `.cmd-row` / `.cmd-select` | Dropdown de comandos shell frecuentes | Evita reescribir comandos de reconocimiento repetitivos en cada sesión |
+| HTML terminal | Barra de plugins con `!sysinfo`, `!screenshot`, `!persist`, `!help`, `!download ···` | Cobertura de los 5 plugins más comunes en el flujo de post-explotación |
+| HTML terminal | Dropdown con 15 comandos de reconocimiento | `whoami`, `id`, `ps aux`, `ls -la`, `cat /etc/passwd`, `ip a`, `ss -tlnp`, `env`, `uname -a`, `df -h`, `free -h`, etc. |
+| JS `runPlugin(cmd)` | Inserta el comando en el input y llama a `sendCmd()` directamente | Permite ejecutar plugins sin interacción con el teclado |
+| JS `fillInput(prefix)` | Pre-rellena el input y posiciona el cursor al final | Para `!download` y otros que necesitan argumento: el operador sólo añade la ruta |
+| JS `pickShell(sel_el)` | Toma el valor del dropdown, lo mete en el input y ejecuta | Resetea el dropdown a la opción vacía tras la selección para permitir repetición |
+
+Los IDs del DOM (`term-title`, `term-body`, `term-prompt`, `term-input`) se mantuvieron sin cambios para que todo el JS preexistente siguiera funcionando sin modificaciones.
+
+---
+
 ## Equipo
 
 | Persona | Frente | Componente |
