@@ -182,8 +182,8 @@ def agent_process_welcome(
 
 # ── Payload helpers (JSON ↔ bytes) ─────────────────────────────────────────────
 
-def encode_beacon(agent_id: str, hostname: str = "", os_name: str = "", ts: int = 0) -> bytes:
-    return json.dumps({"agent_id": agent_id, "hostname": hostname, "os": os_name, "ts": ts}).encode()
+def encode_beacon(agent_id: str, hostname: str = "", os_name: str = "", username: str = "", ts: int = 0) -> bytes:
+    return json.dumps({"agent_id": agent_id, "hostname": hostname, "os": os_name, "username": username, "ts": ts}).encode()
 
 def decode_beacon(payload: bytes) -> dict:
     return json.loads(payload)
