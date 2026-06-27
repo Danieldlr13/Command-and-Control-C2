@@ -235,6 +235,7 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
         <h3>Evasión y Persistencia</h3>
         <div class="mrow"><span class="mcmd">!unhook</span><span class="mdesc">Detecta LD_PRELOAD, tracers, hooks en memoria y procesos AV/EDR activos.</span></div>
         <div class="mrow"><span class="mcmd o">!persist<span class="mtag">Linux</span></span><span class="mdesc">Instala el agente como servicio systemd para persistencia en reinicios.</span></div>
+        <div class="mrow"><span class="mcmd o">!notify &lt;mensaje&gt;</span><span class="mdesc">Muestra un mensaje en pantalla de la víctima en tiempo real. Linux: notify-send → zenity → xmessage → wall. Windows: MessageBox nativo.</span></div>
       </div>
       <div class="msec">
         <h3>Atajos de teclado</h3>
