@@ -17,9 +17,14 @@ _evdev_stop = None      # threading.Event cuando modo evdev
 
 def _on_press(key):
     try:
-        char = key.char or ""
+        char = key.char
     except AttributeError:
-        char = f"[{key.name}]"
+        char = None
+    if not char:
+        try:
+            char = f"[{key.name}]"
+        except AttributeError:
+            char = f"[{key}]"
     with _lock:
         _buffer.append(char)
 
@@ -93,7 +98,7 @@ def _start_evdev():
                 r, _, _ = select.select([kbd.fd], [], [], 0.5)
                 if not r:
                     continue
-                for event in kbd.read(blocking=False):
+                for event in kbd.read():
                     if event.type != ecodes.EV_KEY:
                         continue
                     ke = categorize(event)
