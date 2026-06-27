@@ -333,6 +333,7 @@ const ROWS={
       {cat:'EVASIÓN',items:[
         {cmd:'!unhook',label:'!unhook',cls:'g'},
         {cmd:'!persist',label:'!persist',cls:'r'},
+        {cmd:'!notify ',label:'!notify ···',cls:'r',arg:true},
       ]},
     ],
   ],
@@ -360,6 +361,7 @@ const ROWS={
       ]},
       {cat:'EVASIÓN',items:[
         {cmd:'!unhook',label:'!unhook',cls:'g'},
+        {cmd:'!notify ',label:'!notify ···',cls:'r',arg:true},
       ]},
     ],
   ],
