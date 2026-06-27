@@ -30,6 +30,7 @@ _PANEL_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nexus C2</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2308080f'/%3E%3Ctext x='3' y='22' font-size='14' fill='%2300ff41' font-family='monospace' font-weight='bold'%3E%3E_%3C/text%3E%3C/svg%3E">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html{font-size:15px}
@@ -366,7 +367,7 @@ const ROWS={
 
 const SHELL={
   linux:['── shell rápido ──','whoami','id','uname -a','hostname','ps aux','ls -la','ls -la /tmp','cat /etc/passwd','cat /etc/shadow','ip a','ss -tlnp','netstat -tlnp','crontab -l','env','df -h','free -h','history'],
-  windows:['── shell rápido ──','whoami','whoami /all','hostname','tasklist','netstat -ano','systeminfo','ipconfig /all','net user','net localgroup administrators','dir C:\\Users','type C:\\Windows\\System32\\drivers\\etc\\hosts','reg query HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run','wmic os get Caption,Version','set'],
+  windows:['── shell rápido ──','whoami','whoami /all','hostname','systeminfo','ipconfig /all','netstat -ano','tasklist','dir','dir C:\\Users','dir %TEMP%','type C:\\Windows\\System32\\drivers\\etc\\hosts','net user','arp -a','schtasks /query /fo LIST','wmic os get Caption,Version,OSArchitecture','wmic logicaldisk get Caption,Size,FreeSpace','wmic OS get FreePhysicalMemory,TotalVisibleMemorySize','reg query HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','set','echo %USERNAME% %COMPUTERNAME% %OS%'],
 };
 
 function renderPluginBar(){
