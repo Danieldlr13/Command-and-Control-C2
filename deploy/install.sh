@@ -28,8 +28,9 @@ echo ""
 
 # ── Verificar Python 3 ────────────────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
-    echo "[*] Python 3 no encontrado. Instalando..."
-    sudo apt-get update -qq && sudo apt-get install -y python3 python3-venv
+    echo "[!] ERROR: Python 3 no encontrado."
+    echo "    En Raspberry Pi / Debian:  sudo apt-get install -y python3 python3-venv"
+    exit 1
 fi
 echo "[+] Python: $(python3 --version)"
 
