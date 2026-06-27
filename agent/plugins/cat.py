@@ -1,5 +1,5 @@
 """
-Plugin !cat — lee el contenido de un archivo en la máquina víctima.
+Plugin !cat — lee el contenido de un archivo en la máquina vulnerada.
 !cat <ruta>          → muestra el archivo como texto
 !cat <ruta> --hex    → muestra los primeros bytes en hexadecimal (útil para binarios)
 """

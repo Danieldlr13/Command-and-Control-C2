@@ -1,0 +1,4 @@
+cryptography>=40.0
+requests>=2.31
+pynput>=1.7
+mss>=9.0

