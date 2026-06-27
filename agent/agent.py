@@ -28,6 +28,9 @@ log = logging.getLogger("nexus.agent")
 SERVER_URL       = os.environ.get("NEXUS_SERVER", "http://127.0.0.1:8080")
 AGENT_ID_FILE    = "agent_id.txt"
 MAX_OUTPUT_BYTES = 64 * 1024
+
+# Directorio de trabajo actual — persiste entre comandos
+_cwd = os.path.expanduser("~")
 _MAX_BACKOFF     = 300.0
 
 
@@ -118,14 +121,26 @@ def _run_task(
         return
 
     log.info("TASK  task_id=%.8s cmd=%r", task_id, cmd)
+    global _cwd
     try:
         if cmd.startswith("!"):
             exit_code, stdout, stderr = _plugin_dispatch(cmd)
             stdout = _trunc(stdout)
             stderr = _trunc(stderr)
+        elif cmd.strip().split()[0] == "cd" if cmd.strip() else False:
+            # cd es un builtin — no existe en subprocess, lo manejamos nosotros
+            parts  = cmd.strip().split(None, 1)
+            target = os.path.expanduser(parts[1]) if len(parts) > 1 else os.path.expanduser("~")
+            new_dir = os.path.normpath(os.path.join(_cwd, target))
+            if os.path.isdir(new_dir):
+                _cwd = new_dir
+                exit_code, stdout, stderr = 0, _cwd, ""
+            else:
+                exit_code, stdout, stderr = 1, "", f"cd: {target}: No such file or directory"
         else:
             proc = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+                cwd=_cwd,
             )
             exit_code = proc.returncode
             stdout    = _trunc(proc.stdout)
