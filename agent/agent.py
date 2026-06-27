@@ -1,3 +1,4 @@
+import getpass
 import json
 import logging
 import os
@@ -173,6 +174,11 @@ def _run_task(
 def run() -> None:
     agent_id   = load_or_create_agent_id()
     hostname   = socket.gethostname()
+    os_name    = platform.system()   # 'Linux', 'Windows', 'Darwin'
+    try:
+        username = getpass.getuser()
+    except Exception:
+        username = os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
     server_pub = _load_server_pub()
     transport  = make_transport(SERVER_URL)
     log.info("starting agent_id=%.8s server=%s transport=%s",
@@ -187,7 +193,7 @@ def run() -> None:
             attempt = 0
 
             while True:
-                beacon = encode_beacon(agent_id, hostname, platform.platform(), ts=int(time.time()))
+                beacon = encode_beacon(agent_id, hostname, os_name, username, ts=int(time.time()))
                 frame  = build_frame(MSG_BEACON, beacon, chacha, agent_nonce)
                 try:
                     raw = _post(transport, frame, sid_hex)

